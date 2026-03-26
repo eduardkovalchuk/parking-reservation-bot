@@ -1,0 +1,111 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+.installed.cfg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.env/
+
+# Environment variables / secrets
+.env
+.env.*
+!.env.example
+*.env
+
+# Dependency managers
+Pipfile.lock
+poetry.lock
+uv.lock
+
+# Distribution / packaging
+.Python
+develop-eggs/
+lib/
+lib64/
+htmlcov/
+.tox/
+.nox/
+
+# Testing
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+*.hypothesis/
+nosetests.xml
+test-results/
+junit.xml
+
+# Linting / formatting
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.ruff_cache/
+.pytype/
+
+# Jupyter / notebooks
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# AI / LLM / agentic specifics
+agent_memory/
+vector_store/
+chroma_db/
+faiss_index/
+*.pkl
+*.pickle
+*.faiss
+*.index
+
+# LangChain / LangSmith / LangGraph
+langchain_cache/
+.langchain/
+
+# OpenAI / API caches
+.openai_cache/
+response_cache/
+
+# Logs
+logs/
+*.log
+*.log.*
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+tmp/
+temp/
+.tmp/
+*.bak
+*.orig

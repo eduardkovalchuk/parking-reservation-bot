@@ -1,0 +1,37 @@
+# Core LangChain + LangGraph
+langchain==0.3.7
+langchain-openai==0.2.9
+langchain-weaviate==0.0.3
+langgraph==0.2.56
+
+# OpenAI
+openai==1.55.3
+tiktoken==0.8.0
+
+# Vector database
+weaviate-client==4.9.3
+
+# SQL database
+psycopg2-binary==2.9.10
+
+# Configuration
+python-dotenv==1.0.1
+pydantic-settings==2.6.1
+
+# Guardrails - PII detection
+presidio-analyzer==2.2.354
+presidio-anonymizer==2.2.354
+spacy==3.7.5
+
+# Data processing
+pandas==2.2.3
+numpy==1.26.4
+
+# Testing
+pytest==8.3.4
+pytest-mock==3.14.0
+pytest-asyncio==0.24.0
+
+# Utilities
+rich==13.9.4
+tabulate==0.9.0

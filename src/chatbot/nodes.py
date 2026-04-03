@@ -67,11 +67,11 @@ def node_output_guardrail(state: ChatState) -> Dict[str, Any]:
     guardrail = GuardrailFilter()
     messages = state.get("messages", [])
     if not messages:
-        return {}
+        return {"output_blocked": False}
 
     last_msg = messages[-1]
     if not isinstance(last_msg, AIMessage):
-        return {}
+        return {"output_blocked": False}
 
     result = guardrail.check_output(last_msg.content)
     if result.blocked:
@@ -230,6 +230,9 @@ Field descriptions:
 
 Today's date for reference: {today}
 
+Already collected fields (use these to resolve relative expressions):
+{collected}
+
 Conversation (most recent last):
 {history}
 
@@ -242,14 +245,22 @@ _CONFIRMATION_WORDS = {"yes", "y", "confirm", "ok", "okay", "sure", "correct", "
 _CANCELLATION_WORDS = {"no", "n", "cancel", "stop", "abort", "quit", "exit", "nevermind", "nope"}
 
 
-def _extract_field(field: str, message: str, llm: ChatOpenAI, history: list | None = None) -> Any:
+def _extract_field(
+    field: str,
+    message: str,
+    llm: ChatOpenAI,
+    history: list | None = None,
+    collected: dict | None = None,
+) -> Any:
     """Use the LLM to extract a specific field value from the user message.
 
     Pass the last few conversation messages as `history` so the LLM can
     understand short replies (e.g. "Eduard") in context of the previous
     bot question (e.g. "What is your first name?").
+
+    Pass already-collected `collected` fields so relative expressions like
+    "until 6 pm" are resolved against the known start_datetime.
     """
-    # Format the last N messages as a readable transcript
     history_text = ""
     if history:
         lines = []
@@ -258,10 +269,17 @@ def _extract_field(field: str, message: str, llm: ChatOpenAI, history: list | No
             lines.append(f"{role}: {msg.content}")
         history_text = "\n".join(lines)
 
+    collected_text = "(none yet)"
+    if collected:
+        collected_text = "\n".join(
+            f"- {k}: {v}" for k, v in collected.items() if not k.startswith("_")
+        ) or "(none yet)"
+
     prompt = _EXTRACT_PROMPT.format(
         field=field,
         message=message,
         history=history_text or "(no prior context)",
+        collected=collected_text,
         today=datetime.now().strftime("%Y-%m-%d"),
     )
     try:
@@ -311,6 +329,39 @@ _STAGE_SEQUENCE = [
     "confirming",
 ]
 
+# Quick regex for unmistakable abort words (avoids an LLM call in obvious cases)
+_ABORT_RE = re.compile(
+    r"^(stop|cancel|abort|quit|exit|never\s*mind|forget\s*it|leave\s*it|no\s*thanks|i\s*don'?t\s*want)\b",
+    re.IGNORECASE,
+)
+
+_ABORT_CHECK_PROMPT = """The user is currently filling in a parking reservation form.
+Is the user trying to STOP, CANCEL or ABANDON the reservation process?
+
+Answer true only for clear abandonment signals like:
+  "stop", "cancel", "I want to stop", "forget it", "never mind", "I changed my mind", "abort"
+
+Answer false for anything that looks like a form answer:
+  a name, plate number, date, time, "yes", "no", or a short factual reply.
+
+User message: {message}
+
+Respond with ONLY a JSON object: {{"abort": true}} or {{"abort": false}}
+"""
+
+
+def _is_abort_intent(message: str, llm: ChatOpenAI) -> bool:
+    """Return True if the user is trying to abort the reservation flow."""
+    if _ABORT_RE.search(message.strip()):
+        return True
+    try:
+        prompt = _ABORT_CHECK_PROMPT.format(message=message)
+        response = llm.invoke(prompt)
+        parsed = _parse_llm_json(response.content)
+        return bool(parsed.get("abort", False))
+    except Exception:
+        return False
+
 
 def _format_confirmation_summary(data: dict) -> str:
     summary = (
@@ -336,26 +387,65 @@ def node_handle_reservation(state: ChatState) -> Dict[str, Any]:
     stage = state.get("reservation_stage", "idle")
     res_data: dict = dict(state.get("reservation_data") or {})
 
-    # ── Start new reservation ──────────────────────────────────────────────
-    if stage == "idle":
-        next_stage = "need_name"
-        reply = (
-            "I'd be happy to help you book a parking space! "
-            "Let me collect a few details.\n\n" + _FIELD_QUESTIONS["need_name"]
-        )
+    # ── Abort confirmation ─────────────────────────────────────────────────
+    if stage == "abort_confirming":
+        normalized = user_input.strip().lower()
+        resumed_stage = res_data.pop("_pre_abort_stage", "idle")
+        if normalized in _CONFIRMATION_WORDS:
+            return {
+                "reservation_stage": "idle",
+                "reservation_data": {},
+                "messages": [
+                    AIMessage(
+                        content=(
+                            "Your reservation has been cancelled. "
+                            "Feel free to ask me anything else or start a new booking whenever you’re ready!"
+                        )
+                    )
+                ],
+            }
+        # User said no — resume where we left off
+        if resumed_stage in _FIELD_QUESTIONS:
+            reply = "No problem! Let’s continue.\n\n" + _FIELD_QUESTIONS[resumed_stage]
+        elif resumed_stage == "confirming":
+            reply = "No problem! Let’s continue.\n\n" + _format_confirmation_summary(res_data)
+        else:
+            reply = "No problem! Let’s continue."
         return {
-            "reservation_stage": next_stage,
+            "reservation_stage": resumed_stage,
             "reservation_data": res_data,
             "messages": [AIMessage(content=reply)],
         }
 
+    # ── Start new reservation (handled below after completed/cancelled reset) ──
+
     # ── Collecting fields ──────────────────────────────────────────────────
     if stage in _STAGE_TO_FIELD:
+        # Check if the user is trying to abandon the form before extracting.
+        if _is_abort_intent(user_input, llm):
+            res_data["_pre_abort_stage"] = stage
+            return {
+                "reservation_stage": "abort_confirming",
+                "reservation_data": res_data,
+                "messages": [
+                    AIMessage(
+                        content=(
+                            "Are you sure you want to cancel the booking process? "
+                            "Type **yes** to stop, or **no** to continue where you left off."
+                        )
+                    )
+                ],
+            }
+
         field_name = _STAGE_TO_FIELD[stage]
         # Pass the last 4 messages so the LLM sees the bot's question alongside
         # the user's (potentially short) answer.
         recent_history = state.get("messages", [])[-4:]
-        extracted = _extract_field(field_name, user_input, llm, history=recent_history)
+        extracted = _extract_field(
+            field_name, user_input, llm,
+            history=recent_history,
+            collected=res_data,
+        )
 
         if extracted is None:
             reply = (
@@ -481,11 +571,21 @@ def node_handle_reservation(state: ChatState) -> Dict[str, Any]:
         }
 
     # ── Post-completion / already done ────────────────────────────────────
+    # Reset so the next block starts a fresh booking flow
     if stage in ("completed", "cancelled"):
-        # Reset and treat as a new conversation turn
+        stage = "idle"
+        res_data = {}
+
+    # ── Start new reservation ──────────────────────────────────────────────
+    if stage == "idle":
+        reply = (
+            "I'd be happy to help you book a parking space! "
+            "Let me collect a few details.\n\n" + _FIELD_QUESTIONS["need_name"]
+        )
         return {
-            "reservation_stage": "idle",
-            "reservation_data": {},
+            "reservation_stage": "need_name",
+            "reservation_data": res_data,
+            "messages": [AIMessage(content=reply)],
         }
 
     return {}

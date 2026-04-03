@@ -44,6 +44,7 @@ _nlp_engine = NlpEngineProvider(nlp_configuration={
                 "CARDINAL",    # plain numbers (150, 24/7…)
                 "ORDINAL",     # ordinal numbers (first, second…)
                 "PERCENT",     # percentage values
+                "MONEY",       # monetary amounts (€15.00, EUR 3.00…)
         ],
     },
 }).create_engine()

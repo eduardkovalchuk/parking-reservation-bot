@@ -55,7 +55,5 @@ graph:
 	$(PYTHON) main.py --save-graph graph.png
 
 ## Run the chatbot in interactive mode
-## Usage: make chat  OR  make chat THREAD_ID=my-session-123
-THREAD_ID ?=
 chat:
-	$(PYTHON) main.py $(if $(THREAD_ID),--thread-id $(THREAD_ID),)
+	$(PYTHON) main.py

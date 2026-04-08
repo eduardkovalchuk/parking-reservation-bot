@@ -125,7 +125,6 @@ def build_graph(weaviate_client: weaviate.WeaviateClient) -> Any:
 def chat(
     app: Any,
     user_message: str,
-    thread_id: str,
 ) -> str:
     """
     Send a user message to the compiled graph and return the assistant's reply.
@@ -133,12 +132,11 @@ def chat(
     Args:
         app: Compiled LangGraph app from build_graph().
         user_message: The raw user input string.
-        thread_id: Unique session identifier (used by MemorySaver for per-user state).
 
     Returns:
         The assistant's reply as a plain string.
     """
-    config = {"configurable": {"thread_id": thread_id}}
+    config = {"configurable": {"thread_id": "default"}}
     input_state: dict = {
         "messages": [HumanMessage(content=user_message)],
         "user_input": user_message,

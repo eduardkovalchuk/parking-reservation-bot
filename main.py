@@ -2,10 +2,7 @@
 CityPark Parking Reservation Chatbot - CLI Entry Point
 
 Usage:
-    python main.py [--thread-id <id>]
-
-Options:
-    --thread-id  Unique session ID for conversation continuity (default: auto-generated UUID)
+    python main.py
 
 Requires:
     - Docker services running: docker compose up -d
@@ -16,7 +13,6 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-import uuid
 from pathlib import Path
 
 # Ensure project root is on path when run directly
@@ -67,12 +63,6 @@ def print_welcome() -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="CityPark Parking Chatbot CLI")
     parser.add_argument(
-        "--thread-id",
-        type=str,
-        default=None,
-        help="Session thread ID (for conversation continuity). Defaults to a new UUID.",
-    )
-    parser.add_argument(
         "--save-graph",
         type=str,
         metavar="FILE",
@@ -84,8 +74,6 @@ def main() -> None:
     if args.save_graph:
         _save_graph_image(args.save_graph)
         sys.exit(0)
-
-    thread_id: str = args.thread_id or str(uuid.uuid4())
 
     settings = get_settings()
     print_welcome()
@@ -104,7 +92,6 @@ def main() -> None:
     try:
         app = build_graph(weaviate_client)
         console.print("[green]✓ Connected. Services ready.[/green]")
-        console.print(f"[dim]Session ID: {thread_id}[/dim]\n")
         console.print(Rule(style="dim"))
     except Exception as exc:
         console.print(f"[bold red]✗ Failed to build chatbot graph:[/bold red] {exc}")
@@ -132,7 +119,7 @@ def main() -> None:
             console.print()
             with console.status("[dim]Thinking…[/dim]", spinner="dots"):
                 try:
-                    reply = chat(app, user_input, thread_id)
+                    reply = chat(app, user_input)
                 except Exception as exc:
                     logger.error("Chat error: %s", exc, exc_info=True)
                     reply = (

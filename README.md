@@ -110,11 +110,6 @@ This splits `data/static/parking_info.md` into chunks and loads them into Weavia
 make chat
 ```
 
-Optional: preserve conversation state across sessions with a fixed thread ID:
-```bash
-make chat THREAD_ID=my-session-001
-```
-
 ---
 
 ## Running Tests

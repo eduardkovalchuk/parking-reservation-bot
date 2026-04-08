@@ -1,8 +1,8 @@
 """
 LangGraph state definition for the parking chatbot.
 
-The graph is compiled with a MemorySaver checkpointer so each user session
-(identified by a thread_id) has its own persistent conversation state.
+The graph is compiled with a MemorySaver checkpointer so each
+user session has its own in-memory conversation state.
 """
 from __future__ import annotations
 

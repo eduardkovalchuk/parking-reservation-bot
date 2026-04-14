@@ -24,6 +24,8 @@ class ReservationData(TypedDict, total=False):
     end_datetime: str        # ISO-format string
     space_type: str          # default "standard"
     space_id: Optional[int]
+    space_floor: str
+    space_number: str
     reservation_id: Optional[int]
     total_cost: Optional[float]
 
@@ -46,7 +48,8 @@ class ChatState(TypedDict):
 
     # Multi-turn reservation state machine
     # Stages: "idle" | "need_name" | "need_surname" | "need_car_number"
-    #         | "need_start" | "need_end" | "confirming" | "completed" | "cancelled"
+    #         | "need_space_type" | "need_start" | "need_end"
+    #         | "confirming" | "completed" | "cancelled"
     reservation_stage: str
     reservation_data: ReservationData
 

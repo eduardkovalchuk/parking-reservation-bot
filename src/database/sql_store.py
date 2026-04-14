@@ -9,6 +9,7 @@ Dynamic data stored here:
 from __future__ import annotations
 
 import logging
+import math
 from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Dict, Generator, List, Optional
@@ -65,6 +66,20 @@ def get_price(price_type: str) -> Optional[Dict[str, Any]]:
             )
             row = cur.fetchone()
             return dict(row) if row else None
+
+
+def calculate_cost(start: datetime, end: datetime) -> float:
+    """Calculate the estimated parking cost for a given time period."""
+    hourly_rec = get_price("hourly")
+    daily_max_rec = get_price("daily_max")
+    hourly_rate = float(hourly_rec["amount"]) if hourly_rec else 3.0
+    daily_max = float(daily_max_rec["amount"]) if daily_max_rec else 25.0
+
+    hours = (end - start).total_seconds() / 3600
+    days = hours / 24
+    cost_hourly = hours * hourly_rate
+    cost_daily = math.ceil(days) * daily_max
+    return round(min(cost_hourly, cost_daily), 2)
 
 
 # ---------------------------------------------------------------------------

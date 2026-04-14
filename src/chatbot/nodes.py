@@ -21,6 +21,7 @@ from langchain_openai import ChatOpenAI
 
 from src.chatbot.state import ChatState
 from src.config import get_settings
+from src.database import sql_store
 from src.guardrails.filters import GuardrailFilter
 from src.rag import chain as rag_chain
 from src.rag import retriever as rag_retriever
@@ -228,6 +229,7 @@ Field descriptions:
 - name: The customer's first name
 - surname: The customer's last name / family name
 - car_number: The vehicle licence/registration plate number (e.g. "ABC-1234")
+- space_type: The type of parking space. Must be one of: standard, compact, handicapped, ev
 - start_datetime: The reservation start date and time (ISO 8601, e.g. "2026-04-01T09:00:00")
 - end_datetime: The reservation end date and time (ISO 8601)
 
@@ -298,6 +300,14 @@ _FIELD_QUESTIONS = {
     "need_name": "What is your **first name**?",
     "need_surname": "What is your **last name** (surname)?",
     "need_car_number": "What is your **vehicle registration plate number** (e.g. ABC-1234)?",
+    "need_space_type": (
+        "What **type of parking space** do you need?\n\n"
+        "  1. **standard** — regular parking space\n"
+        "  2. **compact** — smaller vehicle space\n"
+        "  3. **handicapped** — accessible space\n"
+        "  4. **ev** — electric vehicle space with charging\n\n"
+        "Please enter the number (1–4)."
+    ),
     "need_start": (
         "What **date and time** would you like your reservation to **start**? "
         "(e.g. '2026-04-01 09:00' or 'April 1st at 9am')"
@@ -312,14 +322,19 @@ _STAGE_TO_FIELD = {
     "need_name": "name",
     "need_surname": "surname",
     "need_car_number": "car_number",
+    "need_space_type": "space_type",
     "need_start": "start_datetime",
     "need_end": "end_datetime",
 }
+
+_SPACE_TYPE_OPTIONS = {"1": "standard", "2": "compact", "3": "handicapped", "4": "ev"}
+_VALID_SPACE_TYPES = set(_SPACE_TYPE_OPTIONS.values())
 
 _STAGE_SEQUENCE = [
     "need_name",
     "need_surname",
     "need_car_number",
+    "need_space_type",
     "need_start",
     "need_end",
     "confirming",
@@ -360,13 +375,19 @@ def _is_abort_intent(message: str, llm: ChatOpenAI) -> bool:
 
 
 def _format_confirmation_summary(data: dict) -> str:
+    space_info = ""
+    if data.get("space_id"):
+        space_info = f"  • **Space**: Floor {data.get('space_floor', '–')}, Space {data.get('space_number', '–')}\n"
     summary = (
         "Please confirm your reservation details:\n\n"
         f"  • **Name**: {data.get('name', '–')} {data.get('surname', '–')}\n"
         f"  • **Car number**: {data.get('car_number', '–')}\n"
+        f"  • **Space type**: {data.get('space_type', 'standard')}\n"
+        f"{space_info}"
         f"  • **Start**: {data.get('start_datetime', '–')}\n"
-        f"  • **End**: {data.get('end_datetime', '–')}\n\n"
-        "Type **yes** to confirm or **no** to cancel."
+        f"  • **End**: {data.get('end_datetime', '–')}\n"
+        f"  • **Estimated cost**: €{data['total_cost']:.2f}\n"
+        "\nType **yes** to confirm or **no** to cancel."
     )
     return summary
 
@@ -454,11 +475,67 @@ def node_handle_reservation(state: ChatState) -> Dict[str, Any]:
                 "messages": [AIMessage(content=reply)],
             }
 
+        # Validate space_type: accept number (1-4) or full name
+        if field_name == "space_type":
+            raw = str(extracted).strip().lower()
+            if raw in _SPACE_TYPE_OPTIONS:
+                extracted = _SPACE_TYPE_OPTIONS[raw]
+            elif raw not in _VALID_SPACE_TYPES:
+                reply = (
+                    f"'{raw}' is not a valid option. "
+                    f"{_FIELD_QUESTIONS[stage]}"
+                )
+                return {
+                    "reservation_stage": stage,
+                    "reservation_data": res_data,
+                    "messages": [AIMessage(content=reply)],
+                }
+
         res_data[field_name] = str(extracted)
         current_idx = _STAGE_SEQUENCE.index(stage)
         next_stage = _STAGE_SEQUENCE[current_idx + 1]
 
         if next_stage == "confirming":
+            # Look up an available space before showing confirmation
+            try:
+                space = sql_store.find_available_space(
+                    space_type=res_data.get("space_type", "standard"),
+                    start_datetime=datetime.fromisoformat(res_data["start_datetime"]),
+                    end_datetime=datetime.fromisoformat(res_data["end_datetime"]),
+                )
+            except Exception as exc:
+                logger.warning("Space lookup failed: %s", exc)
+                space = None
+
+            if not space:
+                return {
+                    "reservation_stage": "idle",
+                    "reservation_data": {},
+                    "messages": [
+                        AIMessage(
+                            content=(
+                                f"I'm sorry, there are no available **{res_data.get('space_type', 'standard')}** "
+                                "spaces for the requested period. "
+                                "Please try different dates or a different space type. "
+                                "You can start a new booking whenever you're ready!"
+                            )
+                        )
+                    ],
+                }
+
+            res_data["space_id"] = space["id"]
+            res_data["space_floor"] = space["floor"]
+            res_data["space_number"] = space["space_number"]
+
+            try:
+                estimated_cost = sql_store.calculate_cost(
+                    datetime.fromisoformat(res_data["start_datetime"]),
+                    datetime.fromisoformat(res_data["end_datetime"]),
+                )
+                res_data["total_cost"] = estimated_cost
+            except Exception as exc:
+                logger.warning("Cost calculation failed: %s", exc)
+
             reply = _format_confirmation_summary(res_data)
         else:
             reply = _FIELD_QUESTIONS[next_stage]
@@ -511,6 +588,7 @@ def node_handle_reservation(state: ChatState) -> Dict[str, Any]:
                 "start_datetime": res_data["start_datetime"],
                 "end_datetime": res_data["end_datetime"],
                 "space_type": res_data.get("space_type", "standard"),
+                "space_id": res_data.get("space_id"),
             }
             resp = httpx.post(
                 f"http://{settings.admin_api_host}:{settings.admin_api_port}/api/reservations",

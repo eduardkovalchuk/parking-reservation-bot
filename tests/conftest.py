@@ -66,4 +66,7 @@ def sample_reservation_data():
         "start_datetime": "2026-04-01T09:00:00",
         "end_datetime": "2026-04-01T17:00:00",
         "space_type": "standard",
+        "space_id": 1,
+        "space_floor": "B1",
+        "space_number": "S01",
     }

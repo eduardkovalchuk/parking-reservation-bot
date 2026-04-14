@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     postgres_user: str
     postgres_password: str
 
+    admin_api_key: str
+
     # RAG
     retrieval_k: int = 3
     chunk_size: int = 500

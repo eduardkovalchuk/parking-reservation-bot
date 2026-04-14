@@ -13,10 +13,15 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import Optional
 
+import secrets
+
 from fastapi import Depends, FastAPI, HTTPException, Query, Security
-from fastapi.security import APIKeyHeader
+from fastapi.responses import FileResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 import database as db
@@ -39,17 +44,21 @@ app = FastAPI(
 # Auth
 # ---------------------------------------------------------------------------
 
-_api_key_header = APIKeyHeader(name="X-API-Key")
+_security = HTTPBasic()
 
 
-def verify_api_key(api_key: str = Security(_api_key_header)) -> str:
-    """Validate the API key from the X-API-Key header."""
-    expected = get_settings().admin_api_key
-    if not expected:
-        raise HTTPException(status_code=500, detail="ADMIN_API_KEY not configured on server")
-    if api_key != expected:
-        raise HTTPException(status_code=403, detail="Invalid API key")
-    return api_key
+def verify_admin(credentials: HTTPBasicCredentials = Depends(_security)) -> str:
+    """Validate admin credentials via HTTP Basic Auth."""
+    settings = get_settings()
+    correct_username = secrets.compare_digest(credentials.username, settings.admin_username)
+    correct_password = secrets.compare_digest(credentials.password, settings.admin_password)
+    if not (correct_username and correct_password):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid credentials",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return credentials.username
 
 
 # ---------------------------------------------------------------------------
@@ -88,6 +97,8 @@ class ReservationCreate(BaseModel):
 class ReservationResponse(BaseModel):
     id: int
     space_id: int
+    floor: str
+    space_number: str
     customer_name: str
     customer_surname: str
     car_number: str
@@ -175,7 +186,7 @@ def get_reservation(reservation_id: int):
 
 
 @app.post("/api/reservations/{reservation_id}/approve", response_model=StatusResponse)
-def approve_reservation(reservation_id: int, _: str = Depends(verify_api_key)):
+def approve_reservation(reservation_id: int, _: str = Depends(verify_admin)):
     """Approve a pending reservation (set status to confirmed)."""
     row = db.get_reservation(reservation_id)
     if not row:
@@ -198,7 +209,7 @@ def approve_reservation(reservation_id: int, _: str = Depends(verify_api_key)):
 
 
 @app.post("/api/reservations/{reservation_id}/reject", response_model=StatusResponse)
-def reject_reservation(reservation_id: int, _: str = Depends(verify_api_key)):
+def reject_reservation(reservation_id: int, _: str = Depends(verify_admin)):
     """Reject a pending reservation (set status to cancelled)."""
     row = db.get_reservation(reservation_id)
     if not row:
@@ -223,3 +234,27 @@ def reject_reservation(reservation_id: int, _: str = Depends(verify_api_key)):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Admin UI
+# ---------------------------------------------------------------------------
+
+_STATIC_DIR = Path(__file__).parent / "static"
+
+
+@app.get("/", include_in_schema=False)
+def admin_ui(credentials: HTTPBasicCredentials = Depends(_security)):
+    settings = get_settings()
+    correct_username = secrets.compare_digest(credentials.username, settings.admin_username)
+    correct_password = secrets.compare_digest(credentials.password, settings.admin_password)
+    if not (correct_username and correct_password):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid credentials",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return FileResponse(_STATIC_DIR / "index.html")
+
+
+app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")

@@ -5,7 +5,6 @@ Dynamic data stored here:
 - Parking space inventory and availability (real-time)
 - Pricing tiers (hourly, daily, monthly, EV charging)
 - Working hours
-- Reservations (created during chatbot interactions)
 """
 from __future__ import annotations
 
@@ -127,14 +126,6 @@ def find_available_space(
     Find the first available parking space of the requested type for the given
     time window.  A space is considered unavailable if it has an active
     (pending or confirmed) reservation that overlaps the requested window.
-
-    Args:
-        space_type: One of 'standard', 'compact', 'handicapped', 'ev'.
-        start_datetime: Start of the requested window (inclusive).
-        end_datetime: End of the requested window (exclusive).
-
-    Returns:
-        A dict with space details or None if no spaces available.
     """
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -160,68 +151,6 @@ def find_available_space(
             return dict(row) if row else None
 
 
-# ---------------------------------------------------------------------------
-# Reservations
-# ---------------------------------------------------------------------------
-
-def create_reservation(
-    space_id: int,
-    customer_name: str,
-    customer_surname: str,
-    car_number: str,
-    start_datetime: datetime,
-    end_datetime: datetime,
-) -> Dict[str, Any]:
-    """
-    Insert a new reservation and mark the space as reserved.
-
-    Returns the newly created reservation record.
-    """
-    settings = get_settings()
-    hourly_price_row = get_price("hourly")
-    hourly_rate = float(hourly_price_row["amount"]) if hourly_price_row else 3.0
-    daily_max_row = get_price("daily_max")
-    daily_max = float(daily_max_row["amount"]) if daily_max_row else 25.0
-
-    duration_hours = (end_datetime - start_datetime).total_seconds() / 3600
-    duration_days = duration_hours / 24
-    cost_hourly = duration_hours * hourly_rate
-    cost_daily_cap = int(duration_days + 0.999) * daily_max  # ceil days
-    total_cost = round(min(cost_hourly, cost_daily_cap), 2)
-
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO reservations
-                    (space_id, customer_name, customer_surname, car_number,
-                     start_datetime, end_datetime, total_cost, status)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
-                RETURNING id, space_id, customer_name, customer_surname,
-                          car_number, start_datetime, end_datetime, total_cost, status
-                """,
-                (
-                    space_id,
-                    customer_name,
-                    customer_surname,
-                    car_number,
-                    start_datetime,
-                    end_datetime,
-                    total_cost,
-                ),
-            )
-            reservation = dict(cur.fetchone())
-
-    logger.info(
-        "Created reservation #%d for %s %s (car: %s)",
-        reservation["id"],
-        customer_name,
-        customer_surname,
-        car_number,
-    )
-    return reservation
-
-
 def get_reservation_by_id(reservation_id: int) -> Optional[Dict[str, Any]]:
     """Retrieve a reservation by its ID."""
     with get_connection() as conn:
@@ -232,33 +161,3 @@ def get_reservation_by_id(reservation_id: int) -> Optional[Dict[str, Any]]:
             )
             row = cur.fetchone()
             return dict(row) if row else None
-
-
-def confirm_reservation(reservation_id: int) -> bool:
-    """Confirm a pending reservation (human-in-the-loop stage placeholder)."""
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE reservations SET status = 'confirmed' WHERE id = %s AND status = 'pending'",
-                (reservation_id,),
-            )
-            updated = cur.rowcount
-    return updated > 0
-
-
-def cancel_reservation(reservation_id: int) -> bool:
-    """Cancel a reservation and free the parking space."""
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            # Get space_id first
-            cur.execute("SELECT space_id FROM reservations WHERE id = %s", (reservation_id,))
-            row = cur.fetchone()
-            if not row:
-                return False
-            space_id = row["space_id"]
-
-            cur.execute(
-                "UPDATE reservations SET status = 'cancelled' WHERE id = %s",
-                (reservation_id,),
-            )
-    return True

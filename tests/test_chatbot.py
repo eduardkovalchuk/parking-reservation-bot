@@ -187,22 +187,25 @@ class TestHandleReservationNode:
         assert result["reservation_stage"] == "cancelled"
         assert result.get("reservation_data") == {}
 
-    def test_confirmation_calls_create_reservation(self, sample_reservation_data):
-        mock_space = {"id": 1, "floor": "B1", "space_number": "S01", "space_type": "standard"}
-        mock_reservation = {
-            "id": 99, "space_id": 1, "customer_name": "John", "customer_surname": "Doe",
+    def test_confirmation_calls_admin_api(self, sample_reservation_data):
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json.return_value = {
+            "id": 99, "space_id": 1, "floor": "B1", "space_number": "S01",
+            "customer_name": "John", "customer_surname": "Doe",
             "car_number": "ABC-1234",
             "start_datetime": "2026-04-01T09:00:00",
             "end_datetime": "2026-04-01T17:00:00",
             "total_cost": 24.00, "status": "pending",
+            "created_at": "2026-04-01T08:00:00",
         }
+        mock_response.raise_for_status = MagicMock()
         state = _base_state(
             user_input="yes",
             reservation_stage="confirming",
             reservation_data=sample_reservation_data,
         )
-        with patch("src.chatbot.nodes.sql_store.find_available_space", return_value=mock_space), \
-             patch("src.chatbot.nodes.sql_store.create_reservation", return_value=mock_reservation):
+        with patch("src.chatbot.nodes.httpx.post", return_value=mock_response):
             result = node_handle_reservation(state)
 
         assert result["reservation_stage"] == "completed"

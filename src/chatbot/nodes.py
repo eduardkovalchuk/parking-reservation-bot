@@ -14,13 +14,13 @@ import re
 from datetime import datetime
 from typing import Any, Dict
 
+import httpx
 import weaviate
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_openai import ChatOpenAI
 
 from src.chatbot.state import ChatState
 from src.config import get_settings
-from src.database import sql_store
 from src.guardrails.filters import GuardrailFilter
 from src.rag import chain as rag_chain
 from src.rag import retriever as rag_retriever
@@ -505,16 +505,24 @@ def node_handle_reservation(state: ChatState) -> Dict[str, Any]:
                 ],
             }
 
-        # Save the reservation
+        # Save the reservation via Admin API
         try:
-            start_dt = datetime.fromisoformat(res_data["start_datetime"])
-            end_dt = datetime.fromisoformat(res_data["end_datetime"])
-            space = sql_store.find_available_space(
-                res_data.get("space_type", "standard"),
-                start_datetime=start_dt,
-                end_datetime=end_dt,
+            settings = get_settings()
+            payload = {
+                "customer_name": res_data["name"],
+                "customer_surname": res_data["surname"],
+                "car_number": res_data["car_number"],
+                "start_datetime": res_data["start_datetime"],
+                "end_datetime": res_data["end_datetime"],
+                "space_type": res_data.get("space_type", "standard"),
+            }
+            resp = httpx.post(
+                f"http://{settings.admin_api_host}:{settings.admin_api_port}/api/reservations",
+                json=payload,
+                timeout=10.0,
             )
-            if not space:
+
+            if resp.status_code == 409:
                 return {
                     "reservation_stage": "idle",
                     "reservation_data": {},
@@ -528,28 +536,26 @@ def node_handle_reservation(state: ChatState) -> Dict[str, Any]:
                     ],
                 }
 
-            reservation = sql_store.create_reservation(
-                space_id=space["id"],
-                customer_name=res_data["name"],
-                customer_surname=res_data["surname"],
-                car_number=res_data["car_number"],
-                start_datetime=start_dt,
-                end_datetime=end_dt,
-            )
+            resp.raise_for_status()
+            reservation = resp.json()
+
             res_data["reservation_id"] = reservation["id"]
             res_data["total_cost"] = float(reservation["total_cost"])
-            res_data["space_id"] = space["id"]
+            res_data["space_id"] = reservation["space_id"]
+
+            start_dt = datetime.fromisoformat(res_data["start_datetime"])
+            end_dt = datetime.fromisoformat(res_data["end_datetime"])
 
             reply = (
-                f"✅ **Reservation confirmed!**\n\n"
+                f"✅ **Reservation submitted!**\n\n"
                 f"  • Reservation ID: **#{reservation['id']}**\n"
-                f"  • Space: Floor {space['floor']}, Space {space['space_number']}\n"
+                f"  • Space: Floor {reservation['floor']}, Space {reservation['space_number']}\n"
                 f"  • Name: {res_data['name']} {res_data['surname']}\n"
                 f"  • Car: {res_data['car_number']}\n"
                 f"  • Start: {start_dt.strftime('%Y-%m-%d %H:%M')}\n"
                 f"  • End: {end_dt.strftime('%Y-%m-%d %H:%M')}\n"
                 f"  • Estimated cost: **€{float(reservation['total_cost']):.2f}**\n\n"
-                "Your reservation is pending administrator confirmation. "
+                "Your reservation is pending administrator approval. "
                 "You will be notified once it is approved. Thank you for choosing CityPark!"
             )
         except Exception as exc:

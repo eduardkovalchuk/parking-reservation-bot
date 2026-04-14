@@ -29,7 +29,8 @@ class Settings(BaseSettings):
     postgres_user: str
     postgres_password: str
 
-    admin_api_key: str
+    admin_api_host: str
+    admin_api_port: int
 
     # RAG
     retrieval_k: int = 3

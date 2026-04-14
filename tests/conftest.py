@@ -30,7 +30,9 @@ def mock_env_vars(monkeypatch):
     monkeypatch.setenv("POSTGRES_DB", "parking_db")
     monkeypatch.setenv("POSTGRES_USER", "parking_user")
     monkeypatch.setenv("POSTGRES_PASSWORD", "parking_password")
-    monkeypatch.setenv("RETRIEVAL_K", "5")
+    monkeypatch.setenv("RETRIEVAL_K", "3")
+    monkeypatch.setenv("ADMIN_API_HOST", "localhost")
+    monkeypatch.setenv("ADMIN_API_PORT", "8000")
 
 
 @pytest.fixture()

@@ -46,7 +46,7 @@ services:
       context: ./admin_api
       dockerfile: Dockerfile
     ports:
-      - "8000:8000"
+      - "${ADMIN_API_PORT}:${ADMIN_API_PORT}"
     restart: on-failure
     environment:
       POSTGRES_HOST: postgres
@@ -54,7 +54,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      ADMIN_API_KEY: ${ADMIN_API_KEY}
+      ADMIN_USERNAME: ${ADMIN_USERNAME}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
     depends_on:
       postgres:
         condition: service_healthy

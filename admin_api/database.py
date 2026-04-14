@@ -134,26 +134,42 @@ def create_reservation(
                 (space_id, customer_name, customer_surname, car_number,
                  start, end, total_cost),
             )
-            return dict(cur.fetchone())
+            row = dict(cur.fetchone())
+    # Attach space details
+    space = get_space(space_id)
+    if space:
+        row["floor"] = space["floor"]
+        row["space_number"] = space["space_number"]
+    return row
 
 
 def list_reservations(status: str | None = None) -> list[dict[str, Any]]:
     with get_connection() as conn:
         with conn.cursor() as cur:
+            base = """
+                SELECT r.*, ps.floor, ps.space_number
+                FROM reservations r
+                JOIN parking_spaces ps ON ps.id = r.space_id
+            """
             if status:
-                cur.execute(
-                    "SELECT * FROM reservations WHERE status = %s ORDER BY created_at DESC",
-                    (status,),
-                )
+                cur.execute(base + " WHERE r.status = %s ORDER BY r.created_at DESC", (status,))
             else:
-                cur.execute("SELECT * FROM reservations ORDER BY created_at DESC")
+                cur.execute(base + " ORDER BY r.created_at DESC")
             return [dict(row) for row in cur.fetchall()]
 
 
 def get_reservation(reservation_id: int) -> dict[str, Any] | None:
     with get_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM reservations WHERE id = %s", (reservation_id,))
+            cur.execute(
+                """
+                SELECT r.*, ps.floor, ps.space_number
+                FROM reservations r
+                JOIN parking_spaces ps ON ps.id = r.space_id
+                WHERE r.id = %s
+                """,
+                (reservation_id,),
+            )
             row = cur.fetchone()
             return dict(row) if row else None
 
@@ -166,11 +182,11 @@ def update_reservation_status(reservation_id: int, new_status: str) -> dict[str,
                 UPDATE reservations
                 SET status = %s
                 WHERE id = %s AND status = 'pending'
-                RETURNING id, space_id, customer_name, customer_surname,
-                          car_number, start_datetime, end_datetime,
-                          total_cost, status, created_at
+                RETURNING id
                 """,
                 (new_status, reservation_id),
             )
             row = cur.fetchone()
-            return dict(row) if row else None
+            if not row:
+                return None
+    return get_reservation(reservation_id)

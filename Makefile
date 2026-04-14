@@ -38,6 +38,11 @@ down:
 test:
 	$(PYTHON) -m pytest tests/ -v
 
+## Run Admin API unit tests
+test-admin:
+	docker build --target test -t admin-api-test ./admin_api
+	docker run --rm --env-file .env admin-api-test
+
 ## Run the RAG evaluation suite
 ## Usage: make evaluate
 ##         make evaluate NO_LLM_JUDGE=1

@@ -15,7 +15,8 @@ class Settings(BaseSettings):
     postgres_user: str
     postgres_password: str
 
-    admin_api_key: str
+    admin_username: str
+    admin_password: str
 
 
 @lru_cache(maxsize=1)

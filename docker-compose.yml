@@ -45,6 +45,7 @@ services:
     build:
       context: ./admin_api
       dockerfile: Dockerfile
+      target: production
     ports:
       - "${ADMIN_API_PORT}:${ADMIN_API_PORT}"
     restart: on-failure

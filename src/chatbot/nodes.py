@@ -33,6 +33,16 @@ def _get_llm() -> ChatOpenAI:
     return ChatOpenAI(model=s.openai_chat_model, openai_api_key=s.openai_api_key, temperature=0.1)
 
 
+def _parse_llm_json(text: str) -> dict:
+    """Strip optional markdown code fences and parse JSON from LLM output."""
+    content = text.strip()
+    if content.startswith("```"):
+        lines = content.splitlines()
+        inner = [line for line in lines[1:] if line.strip() != "```"]
+        content = "\n".join(inner).strip()
+    return json.loads(content)
+
+
 # ---------------------------------------------------------------------------
 # Guardrail nodes
 # ---------------------------------------------------------------------------
@@ -141,14 +151,7 @@ def node_classify_intent(state: ChatState) -> Dict[str, Any]:
     prompt = _INTENT_PROMPT.format(message=user_input)
     try:
         response = llm.invoke(prompt)
-        content = response.content
-        if isinstance(content, str):
-            content = content.strip()
-            if content.startswith("```"):
-                lines = content.splitlines()
-                inner = [line for line in lines[1:] if line.strip() != "```"]
-                content = "\n".join(inner).strip()
-        parsed = json.loads(content)
+        parsed = _parse_llm_json(response.content)
         intent = parsed.get("intent", "general")
     except Exception as exc:
         logger.warning("Intent classification failed (%s); defaulting to 'general'.", exc)
@@ -284,14 +287,7 @@ def _extract_field(
     )
     try:
         response = llm.invoke(prompt)
-        content = response.content
-        if isinstance(content, str):
-            content = content.strip()
-            if content.startswith("```"):
-                lines = content.splitlines()
-                inner = [line for line in lines[1:] if line.strip() != "```"]
-                content = "\n".join(inner).strip()
-        parsed = json.loads(content)
+        parsed = _parse_llm_json(response.content)
         return parsed.get(field)
     except Exception as exc:
         logger.warning("Field extraction failed for '%s': %s", field, exc)

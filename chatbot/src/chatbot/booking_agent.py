@@ -2,24 +2,25 @@
 Booking agent — Agent 2 in the HITL reservation flow.
 
 Responsibilities:
-  1. Create a pending reservation in PostgreSQL (no admin approval needed).
-  2. Call request_admin_approval, which interrupts the graph until an admin
-     decision arrives via the Admin API + Streamlit polling.
-  3. After resuming, communicate the outcome (confirmed / cancelled) to the user.
+  1. Create a pending reservation in PostgreSQL.
+  2. Interrupt the graph until an admin approves or rejects via the Admin UI.
+  3. Return a structured BookingResult consumed by Agent 1 (chat agent),
+     which composes the final user-facing response.
 """
 from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal, Optional
 
-import weaviate
 from langchain.agents import create_agent
+from langchain.agents.structured_output import ToolStrategy
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import InjectedToolCallId, tool
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import InjectedState
 from langgraph.types import Command, interrupt
+from pydantic import BaseModel, Field
 
 from src.chatbot.state import AgentState
 from src.config import get_settings
@@ -27,34 +28,58 @@ from src.database import sql_store
 
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# Structured output schema
+# ---------------------------------------------------------------------------
+
+class BookingResult(BaseModel):
+    """Structured outcome from the booking process, handed off to the chat agent."""
+
+    status: Literal["confirmed", "cancelled", "no_space_available"] = Field(
+        description="Final status of the booking attempt."
+    )
+    reservation_id: Optional[int] = Field(
+        None, description="Reservation ID if a record was created."
+    )
+    space_number: Optional[str] = Field(None, description="Assigned parking space number.")
+    floor: Optional[str] = Field(None, description="Floor of the assigned space.")
+    total_cost: Optional[float] = Field(None, description="Total cost in EUR.")
+
+
+# ---------------------------------------------------------------------------
+# System prompt
+# ---------------------------------------------------------------------------
+
 _SYSTEM_PROMPT = """\
-You are the CityPark Booking Agent. You handle the final step of the reservation process.
+You are the CityPark Booking Agent — a backend worker.
+The customer's details are already in state.
 
-The customer's details are already in state (collected by the assistant before you).
-
-## Your workflow — follow it in order, no skipping steps
+## Workflow — follow in order
 
 ### Step 1 — Create the pending reservation
-Call `create_pending_reservation`.
-- If it fails (no available space), apologise to the user, explain what happened, \
-and suggest they try different dates or a different space type.
-- If it succeeds, proceed to Step 2.
+Call `create_pending_reservation`. It reads all required fields from state automatically.
 
 ### Step 2 — Request admin approval
-Call `request_admin_approval` with the reservation_id you just received.
-The graph will pause here until an admin reviews the request.
+If Step 1 succeeded, call `request_admin_approval` with the reservation_id.
+The graph pauses here until an admin decides.
 
-### Step 3 — Communicate the outcome
-After the admin's decision arrives:
-- **Confirmed**: congratulate the customer warmly and give the full details:
-  Reservation ID, space number, floor, total cost.
-- **Cancelled / rejected**: apologise professionally and invite the customer \
-  to contact info@citypark.com or +31 20 555 0123 for assistance.
+### Step 3 — Return a structured BookingResult
+After every outcome (success, rejection, or no space), output a BookingResult:
+- Admin approved  → status="confirmed", fill reservation_id, space_number, floor, total_cost
+- Admin rejected  → status="cancelled"
+- No space found  → status="no_space_available"
+
+Do NOT write any conversational message to the user — your only output is the BookingResult struct.
+The chat agent will read it and compose the user-facing reply.
 """
 
 
+# ---------------------------------------------------------------------------
+# Tools
+# ---------------------------------------------------------------------------
+
 def create_booking_tools() -> list:
-    """Return tools for the booking agent."""
 
     @tool
     def create_pending_reservation(
@@ -64,7 +89,7 @@ def create_booking_tools() -> list:
         """Find an available space and create a pending reservation in the database.
 
         Reads all required fields from state — no parameters needed.
-        Returns the reservation_id, space details, and total cost on success.
+        Returns reservation_id, space details, and total cost on success.
         """
         data: dict = state.get("reservation_data") or {}
 
@@ -135,8 +160,7 @@ def create_booking_tools() -> list:
                             f"Pending reservation created — "
                             f"ID #{reservation['id']}, "
                             f"Space {space['space_number']} (Floor {space['floor']}), "
-                            f"Cost €{reservation['total_cost']:.2f}. "
-                            "Now requesting admin approval."
+                            f"Cost €{reservation['total_cost']:.2f}."
                         ),
                         tool_call_id=tool_call_id,
                     )
@@ -146,10 +170,10 @@ def create_booking_tools() -> list:
 
     @tool
     def request_admin_approval(reservation_id: int) -> str:
-        """Interrupt the graph and wait for an admin to approve or reject the reservation.
+        """Interrupt the graph and wait for an admin to approve or reject.
 
-        The graph resumes automatically once the admin makes a decision via the Admin UI.
-        Returns the admin's decision so you can inform the customer.
+        Resumes automatically once the admin decides via the Admin UI.
+        Returns the admin's decision.
         """
         decision = interrupt({"reservation_id": reservation_id})
         status = decision.get("status", "unknown") if isinstance(decision, dict) else str(decision)
@@ -158,6 +182,10 @@ def create_booking_tools() -> list:
 
     return [create_pending_reservation, request_admin_approval]
 
+
+# ---------------------------------------------------------------------------
+# Agent factory
+# ---------------------------------------------------------------------------
 
 def create_booking_agent() -> object:
     """Build and return the compiled booking agent subgraph."""
@@ -174,4 +202,5 @@ def create_booking_agent() -> object:
         tools=create_booking_tools(),
         state_schema=AgentState,
         system_prompt=_SYSTEM_PROMPT,
+        response_format=ToolStrategy(BookingResult),
     )

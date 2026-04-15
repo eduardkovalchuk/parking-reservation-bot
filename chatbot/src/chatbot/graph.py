@@ -36,9 +36,6 @@ from src.chatbot.state import AgentState
 
 logger = logging.getLogger(__name__)
 
-_CONFIG = {"configurable": {"thread_id": "default"}}
-
-
 # ---------------------------------------------------------------------------
 # Return type
 # ---------------------------------------------------------------------------
@@ -112,7 +109,7 @@ def build_graph(weaviate_client: weaviate.WeaviateClient, checkpointer=None) -> 
         {"booking_agent": "booking_agent", "output_guardrail": "output_guardrail"},
     )
     builder.add_edge("booking_agent", "clear_booking_flag")
-    builder.add_edge("clear_booking_flag", "output_guardrail")
+    builder.add_edge("clear_booking_flag", "chatbot_agent")
     builder.add_edge("output_guardrail", END)
 
     return builder.compile(checkpointer=checkpointer)
@@ -122,49 +119,56 @@ def build_graph(weaviate_client: weaviate.WeaviateClient, checkpointer=None) -> 
 # Chat helpers
 # ---------------------------------------------------------------------------
 
-def _last_ai_message(app: Any) -> str:
-    snapshot = app.get_state(_CONFIG)
+def _config(thread_id: str) -> dict:
+    return {"configurable": {"thread_id": thread_id}}
+
+
+def _last_ai_message(app: Any, thread_id: str) -> str:
+    snapshot = app.get_state(_config(thread_id))
     messages = snapshot.values.get("messages", [])
     last_ai = next((m for m in reversed(messages) if isinstance(m, AIMessage)), None)
     return last_ai.content if last_ai else ""
 
 
-def chat(app: Any, user_message: str) -> ChatResult:
+def chat(app: Any, user_message: str, thread_id: str) -> ChatResult:
     """
     Send a user message, run the graph, and return the result.
 
     If the booking agent hits an interrupt (awaiting admin approval) the result
     will have interrupted=True and interrupt_reservation_id set.
     """
-    app.invoke({"messages": [HumanMessage(content=user_message)]}, _CONFIG)
+    config = _config(thread_id)
+    app.invoke({"messages": [HumanMessage(content=user_message)]}, config)
 
-    snapshot = app.get_state(_CONFIG)
+    snapshot = app.get_state(config)
 
     # Check for interrupt inside booking_agent
     for task in snapshot.tasks:
         for intr in (task.interrupts or []):
             value = intr.value if hasattr(intr, "value") else intr
             reservation_id = value.get("reservation_id") if isinstance(value, dict) else None
-            reply = _last_ai_message(app) or "Your reservation is pending admin approval."
+            reply = _last_ai_message(app, thread_id) or "Your reservation is pending admin approval."
             return ChatResult(
                 reply=reply,
                 interrupted=True,
                 interrupt_reservation_id=reservation_id,
             )
 
-    return ChatResult(reply=_last_ai_message(app) or "I'm sorry, I couldn't generate a response.")
+    return ChatResult(reply=_last_ai_message(app, thread_id) or "I'm sorry, I couldn't generate a response.")
 
 
-def resume_after_admin_decision(app: Any, status: str, reservation_id: int) -> ChatResult:
+def resume_after_admin_decision(app: Any, status: str, reservation_id: int, thread_id: str) -> ChatResult:
     """
     Resume the paused graph after the admin approves or rejects a reservation.
 
     Args:
         status:         "confirmed" or "cancelled"
         reservation_id: The reservation that was decided.
+        thread_id:      The conversation thread to resume.
     """
+    config = _config(thread_id)
     app.invoke(
         Command(resume={"status": status, "reservation_id": reservation_id}),
-        _CONFIG,
+        config,
     )
-    return ChatResult(reply=_last_ai_message(app) or "Your booking has been processed.")
+    return ChatResult(reply=_last_ai_message(app, thread_id) or "Your booking has been processed.")

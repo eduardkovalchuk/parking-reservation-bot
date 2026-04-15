@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -106,6 +107,7 @@ def _init_session() -> None:
         postgres_conn.close()
         st.stop()
 
+    st.session_state.thread_id = str(uuid.uuid4())
     st.session_state.messages = [
         {
             "role": "assistant",
@@ -147,7 +149,7 @@ def _reset_session() -> None:
 # ---------------------------------------------------------------------------
 
 def _get_reservation_data() -> dict:
-    config = {"configurable": {"thread_id": "default"}}
+    config = {"configurable": {"thread_id": st.session_state.get("thread_id", "default")}}
     try:
         snapshot = st.session_state.app.get_state(config)
         return snapshot.values.get("reservation_data") or {}
@@ -179,7 +181,8 @@ def _check_for_admin_decision() -> None:
     if status and status != "pending":
         with st.spinner("Admin decided — processing your reservation…"):
             result = resume_after_admin_decision(
-                st.session_state.app, status, reservation_id
+                st.session_state.app, status, reservation_id,
+                thread_id=st.session_state.thread_id,
             )
         st.session_state.messages.append({"role": "assistant", "content": result.reply})
         st.session_state.reservation_data = _get_reservation_data()
@@ -286,7 +289,10 @@ def main() -> None:
         with st.chat_message("assistant"):
             with st.spinner("Thinking…"):
                 try:
-                    result: ChatResult = chat(st.session_state.app, prompt)
+                    result: ChatResult = chat(
+                        st.session_state.app, prompt,
+                        thread_id=st.session_state.thread_id,
+                    )
                 except Exception as exc:
                     result = ChatResult(
                         reply=(

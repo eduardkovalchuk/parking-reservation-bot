@@ -124,7 +124,7 @@ def main() -> None:
             console.print()
             with console.status("[dim]Thinking…[/dim]", spinner="dots"):
                 try:
-                    result: ChatResult = chat(app, user_input)
+                    result: ChatResult = chat(app, user_input, thread_id="cli-session")
                 except Exception as exc:
                     logger.error("Chat error: %s", exc, exc_info=True)
                     result = ChatResult(

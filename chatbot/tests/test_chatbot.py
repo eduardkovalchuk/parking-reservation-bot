@@ -182,6 +182,7 @@ class TestGetReservationDraftTool:
                 "car_number": "ABC-1234",
                 "start_datetime": "2026-04-01T09:00:00",
                 "end_datetime": "2026-04-01T17:00:00",
+                "space_type": "standard",
             }
         }
         result = self.tool.func(state=state)
@@ -250,3 +251,98 @@ class TestUpdateReservationDraftTool:
         result = self._invoke({"reservation_data": {}}, name="John")
         tool_msgs = [m for m in result.update.get("messages", []) if isinstance(m, ToolMessage)]
         assert tool_msgs[0].tool_call_id == "test-call-id"
+
+    def test_space_type_is_lowercased(self):
+        result = self._invoke({"reservation_data": {}}, space_type="EV")
+        assert result.update["reservation_data"]["space_type"] == "ev"
+
+    def test_space_type_standard_lowercased(self):
+        result = self._invoke({"reservation_data": {}}, space_type="Standard")
+        assert result.update["reservation_data"]["space_type"] == "standard"
+
+
+# ---------------------------------------------------------------------------
+# Tests: calculate_reservation_cost tool
+# ---------------------------------------------------------------------------
+
+class TestCalculateReservationCostTool:
+    def setup_method(self):
+        self.tools = create_tools(MagicMock())
+        self.tool = _get_tool(self.tools, "calculate_reservation_cost")
+
+    def _invoke(self, start: str, end: str):
+        return self.tool.func(start_datetime=start, end_datetime=end)
+
+    def test_returns_cost_string(self):
+        price_hourly = {"price_type": "hourly", "amount": 3.00, "currency": "EUR", "description": ""}
+        price_daily = {"price_type": "daily_max", "amount": 25.00, "currency": "EUR", "description": ""}
+        with patch("src.chatbot.tools.sql_store.calculate_cost", return_value=24.0):
+            result = self._invoke("2026-04-01T09:00:00", "2026-04-01T17:00:00")
+        assert "24.00" in result
+        assert "€" in result
+
+    def test_end_before_start_returns_error(self):
+        result = self._invoke("2026-04-01T17:00:00", "2026-04-01T09:00:00")
+        assert "after" in result.lower() or "end" in result.lower()
+
+    def test_invalid_datetime_returns_error(self):
+        result = self._invoke("not-a-date", "2026-04-01T17:00:00")
+        assert "parse" in result.lower() or "could not" in result.lower()
+
+    def test_duration_included_in_output(self):
+        with patch("src.chatbot.tools.sql_store.calculate_cost", return_value=24.0):
+            result = self._invoke("2026-04-01T09:00:00", "2026-04-01T17:00:00")
+        assert "8.0" in result  # 8 hours
+
+
+# ---------------------------------------------------------------------------
+# Tests: submit_for_booking tool
+# ---------------------------------------------------------------------------
+
+class TestSubmitForBookingTool:
+    def setup_method(self):
+        self.tools = create_tools(MagicMock())
+        self.tool = _get_tool(self.tools, "submit_for_booking")
+
+    def _invoke(self, state: dict):
+        return self.tool.func(state=state, tool_call_id="test-call-id")
+
+    def test_returns_command(self):
+        state = {
+            "reservation_data": {
+                "name": "John", "surname": "Doe", "car_number": "ABC-1234",
+                "start_datetime": "2026-04-01T09:00:00",
+                "end_datetime": "2026-04-01T17:00:00",
+                "space_type": "standard",
+            }
+        }
+        result = self._invoke(state)
+        assert isinstance(result, Command)
+
+    def test_sets_booking_requested_when_all_fields_present(self):
+        state = {
+            "reservation_data": {
+                "name": "John", "surname": "Doe", "car_number": "ABC-1234",
+                "start_datetime": "2026-04-01T09:00:00",
+                "end_datetime": "2026-04-01T17:00:00",
+                "space_type": "standard",
+            }
+        }
+        result = self._invoke(state)
+        assert result.update.get("booking_requested") is True
+
+    def test_returns_error_when_fields_missing(self):
+        from langchain_core.messages import ToolMessage
+        state = {"reservation_data": {"name": "John"}}
+        result = self._invoke(state)
+        # Should not set booking_requested
+        assert not result.update.get("booking_requested")
+        tool_msgs = [m for m in result.update.get("messages", []) if isinstance(m, ToolMessage)]
+        assert tool_msgs and "missing" in tool_msgs[0].content.lower()
+
+    def test_empty_reservation_data_returns_error(self):
+        from langchain_core.messages import ToolMessage
+        state = {"reservation_data": {}}
+        result = self._invoke(state)
+        tool_msgs = [m for m in result.update.get("messages", []) if isinstance(m, ToolMessage)]
+        assert tool_msgs and "missing" in tool_msgs[0].content.lower()

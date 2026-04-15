@@ -65,8 +65,7 @@ def create_tools(weaviate_client: weaviate.WeaviateClient) -> list:
         if not data:
             return (
                 "No reservation data collected yet.\n"
-                f"Required fields: {', '.join(_REQUIRED_FIELDS)}\n"
-                "Optional: space_type (standard | compact | handicapped | ev) — defaults to standard."
+                f"Required fields: {', '.join(_REQUIRED_FIELDS)}"
             )
 
         lines = []
@@ -78,9 +77,6 @@ def create_tools(weaviate_client: weaviate.WeaviateClient) -> list:
             else:
                 lines.append(f"  {field}: MISSING")
                 missing.append(field)
-
-        space_type = data.get("space_type", "standard (default)")
-        lines.append(f"  space_type: {space_type}")
 
         summary = "Reservation draft:\n" + "\n".join(lines)
         if missing:
@@ -117,7 +113,7 @@ def create_tools(weaviate_client: weaviate.WeaviateClient) -> list:
                 "car_number": car_number,
                 "start_datetime": start_datetime,
                 "end_datetime": end_datetime,
-                "space_type": space_type,
+                "space_type": space_type.lower() if space_type else None,
             }.items()
             if v is not None
         }

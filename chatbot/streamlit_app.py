@@ -4,7 +4,6 @@ CityPark Parking Reservation Chatbot — Streamlit UI
 from __future__ import annotations
 
 import sys
-import time
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -167,17 +166,19 @@ def _get_reservation_status(reservation_id: int) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
-# Approval polling
+# Approval polling — non-blocking fragment
 # ---------------------------------------------------------------------------
 
-def _check_for_admin_decision() -> None:
+@st.fragment(run_every=4)
+def _approval_polling() -> None:
     """
-    Called on each rerun while awaiting_approval_id is set.
-    Polls the DB; when the status changes from 'pending', resumes the graph.
+    Reruns every 4 seconds independently of the rest of the page.
+    No sleep, no freeze — the chat history and sidebar stay fully interactive.
     """
     reservation_id: int = st.session_state.awaiting_approval_id
-    status = _get_reservation_status(reservation_id)
+    st.info(f"⏳ Reservation #{reservation_id} is awaiting admin approval…")
 
+    status = _get_reservation_status(reservation_id)
     if status and status != "pending":
         with st.spinner("Admin decided — processing your reservation…"):
             result = resume_after_admin_decision(
@@ -186,12 +187,8 @@ def _check_for_admin_decision() -> None:
             )
         st.session_state.messages.append({"role": "assistant", "content": result.reply})
         st.session_state.reservation_data = _get_reservation_data()
-        st.session_state.awaiting_approval_id = None
-        st.rerun()
-    else:
-        # Still pending — wait and poll again
-        time.sleep(4)
-        st.rerun()
+        del st.session_state.awaiting_approval_id
+        st.rerun()  # full page rerun to show the final reply
 
 
 # ---------------------------------------------------------------------------
@@ -256,12 +253,6 @@ def main() -> None:
 
     _init_session()
 
-    # Polling loop — runs on every rerun while waiting for admin
-    if st.session_state.get("awaiting_approval_id"):
-        _check_for_admin_decision()
-        # _check_for_admin_decision calls st.rerun() or st.stop() so we
-        # only reach here if it returned normally (shouldn't happen normally)
-
     status = _check_services()
     _render_sidebar(status)
 
@@ -273,12 +264,11 @@ def main() -> None:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    # Show waiting banner if interrupted
+    # Waiting for admin — show non-blocking polling widget
     if st.session_state.get("awaiting_approval_id"):
-        rid = st.session_state.awaiting_approval_id
         with st.chat_message("assistant"):
-            st.info(f"⏳ Reservation #{rid} is awaiting admin approval. This page refreshes automatically…")
-        return  # Don't accept new input while paused
+            _approval_polling()
+        return  # disable chat input while paused
 
     # Normal chat input
     if prompt := st.chat_input("Ask about parking or make a reservation..."):

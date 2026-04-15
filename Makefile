@@ -1,16 +1,18 @@
 .PHONY: up down reset ingest test evaluate graph chat init
 
 ifeq ($(OS),Windows_NT)
-    PYTHON := .venv/Scripts/python
-    PIP    := .venv/Scripts/pip
+    PYTHON      := .venv/Scripts/python
+    PIP         := .venv/Scripts/pip
+    VENV_CREATE := if not exist .venv python -m venv .venv
 else
-    PYTHON := .venv/bin/python
-    PIP    := .venv/bin/pip
+    PYTHON      := .venv/bin/python
+    PIP         := .venv/bin/pip
+    VENV_CREATE := [ -d ".venv" ] || python3 -m venv .venv
 endif
 
 ## Initialize the project by installing dependencies
 init:
-	@if [ ! -d ".venv" ]; then python3 -m venv .venv; fi
+	$(VENV_CREATE)
 	$(PIP) install -r requirements.txt
 
 	# Download spaCy model (required for Presidio PII detection)

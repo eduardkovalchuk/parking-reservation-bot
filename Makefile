@@ -10,7 +10,7 @@ endif
 
 ## Initialize the project by installing dependencies
 init:
-	$(PYTHON) -m venv .venv
+	@if [ ! -d ".venv" ]; then python3 -m venv .venv; fi
 	$(PIP) install -r requirements.txt
 
 	# Download spaCy model (required for Presidio PII detection)

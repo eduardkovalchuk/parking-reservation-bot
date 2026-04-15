@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import time
 from pathlib import Path
 
 # Ensure project root is on path when run directly
@@ -29,8 +30,11 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.rule import Rule
 
-from src.chatbot.graph import build_graph, chat, ChatResult
+import psycopg
+
+from src.chatbot.graph import build_graph, chat, resume_after_admin_decision, ChatResult
 from src.config import get_settings
+from src.database import sql_store
 from src.database.vector_store import get_weaviate_client
 from unittest.mock import MagicMock
 
@@ -83,6 +87,9 @@ def main() -> None:
     settings = get_settings()
     print_welcome()
 
+    weaviate_client = None
+    postgres_conn = None
+
     console.print("[dim]Connecting to services…[/dim]")
     try:
         weaviate_client = get_weaviate_client()
@@ -95,12 +102,27 @@ def main() -> None:
         sys.exit(1)
 
     try:
-        app = build_graph(weaviate_client)
+        conn_string = (
+            f"postgresql://{settings.postgres_user}:{settings.postgres_password}"
+            f"@{settings.postgres_host}:{settings.postgres_port}/{settings.postgres_db}"
+        )
+        from langgraph.checkpoint.postgres import PostgresSaver
+        postgres_conn = psycopg.connect(conn_string, autocommit=True)
+        checkpointer = PostgresSaver(postgres_conn)
+        checkpointer.setup()
+    except Exception as exc:
+        console.print(f"[bold red]✗ Failed to connect to PostgreSQL:[/bold red] {exc}")
+        weaviate_client.close()
+        sys.exit(1)
+
+    try:
+        app = build_graph(weaviate_client, checkpointer)
         console.print("[green]✓ Connected. Services ready.[/green]")
         console.print(Rule(style="dim"))
     except Exception as exc:
         console.print(f"[bold red]✗ Failed to build chatbot graph:[/bold red] {exc}")
         weaviate_client.close()
+        postgres_conn.close()
         sys.exit(1)
 
     console.print()
@@ -144,17 +166,37 @@ def main() -> None:
             )
 
             if result.interrupted:
+                reservation_id = result.interrupt_reservation_id
                 console.print(
-                    f"[yellow]⏳ Reservation #{result.interrupt_reservation_id} is pending admin "
-                    "approval via the Admin UI. Use the web UI (Streamlit) to receive the "
-                    "confirmation once the admin decides.[/yellow]"
+                    f"\n[yellow]⏳ Reservation #{reservation_id} is pending admin approval.\n"
+                    "Waiting… (approve or reject in the Admin UI at http://localhost:8510)[/yellow]"
                 )
-                break  # CLI can't poll — exit gracefully
+                while True:
+                    time.sleep(4)
+                    row = sql_store.get_reservation_by_id(reservation_id)
+                    status = row["status"] if row else None
+                    if status and status != "pending":
+                        with console.status("[dim]Admin decided — finalising…[/dim]", spinner="dots"):
+                            result = resume_after_admin_decision(
+                                app, status, reservation_id, thread_id="cli-session"
+                            )
+                        console.print(
+                            Panel(
+                                Markdown(result.reply),
+                                title="[bold green]Assistant[/bold green]",
+                                border_style="green",
+                                padding=(0, 1),
+                            )
+                        )
+                        break
 
             console.print()
 
     finally:
-        weaviate_client.close()
+        if weaviate_client:
+            weaviate_client.close()
+        if postgres_conn:
+            postgres_conn.close()
 
 
 if __name__ == "__main__":

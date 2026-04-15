@@ -83,7 +83,7 @@ You can reserve a space directly through this chatbot! The process is simple:
    - Desired start date and time
    - Desired end date and time
 3. **Confirm the booking summary.** The chatbot will show you a summary with the estimated cost. Type "yes" to confirm.
-4. **Administrator confirmation.** Once submitted, a CityPark administrator will review and confirm your reservation. You will be notified by email.
+4. **Administrator confirmation.** Once submitted, a CityPark administrator will review and confirm your reservation. You will be notified in the chat.
 
 ### Modification & Cancellation
 

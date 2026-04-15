@@ -31,3 +31,4 @@ class AgentState(MessagesState):
     reservation_data: ReservationData
     input_blocked: bool
     block_reason: str
+    booking_requested: bool  # set True by Agent 1 when user confirms booking

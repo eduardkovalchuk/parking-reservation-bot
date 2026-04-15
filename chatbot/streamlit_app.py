@@ -4,19 +4,29 @@ CityPark Parking Reservation Chatbot — Streamlit UI
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
+from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from dotenv import load_dotenv
 load_dotenv()
 
+import psycopg
 import psycopg2
 import streamlit as st
 import weaviate as weaviate_lib
+from langgraph.checkpoint.postgres import PostgresSaver
 
-from src.chatbot.graph import build_graph, chat
+from src.chatbot.graph import (
+    ChatResult,
+    build_graph,
+    chat,
+    resume_after_admin_decision,
+)
 from src.config import get_settings
+from src.database import sql_store
 from src.database.vector_store import get_weaviate_client
 
 # ---------------------------------------------------------------------------
@@ -24,7 +34,6 @@ from src.database.vector_store import get_weaviate_client
 # ---------------------------------------------------------------------------
 
 def _check_services() -> dict[str, bool]:
-    """Probe Weaviate and PostgreSQL. Returns connection status for each."""
     settings = get_settings()
     status = {"weaviate": False, "postgres": False}
 
@@ -65,13 +74,36 @@ def _init_session() -> None:
     if "app" in st.session_state:
         return
 
+    settings = get_settings()
+
     try:
-        client = get_weaviate_client()
-        app = build_graph(client)
-        st.session_state.weaviate_client = client
+        weaviate_client = get_weaviate_client()
+    except Exception as exc:
+        st.error(f"Failed to connect to Weaviate: {exc}")
+        st.stop()
+
+    try:
+        conn_string = (
+            f"postgresql://{settings.postgres_user}:{settings.postgres_password}"
+            f"@{settings.postgres_host}:{settings.postgres_port}/{settings.postgres_db}"
+        )
+        postgres_conn = psycopg.connect(conn_string, autocommit=True)
+        checkpointer = PostgresSaver(postgres_conn)
+        checkpointer.setup()
+        st.session_state.postgres_conn = postgres_conn
+    except Exception as exc:
+        st.error(f"Failed to set up Postgres checkpointer: {exc}")
+        weaviate_client.close()
+        st.stop()
+
+    try:
+        app = build_graph(weaviate_client, checkpointer)
+        st.session_state.weaviate_client = weaviate_client
         st.session_state.app = app
     except Exception as exc:
         st.error(f"Failed to initialise the chatbot: {exc}")
+        weaviate_client.close()
+        postgres_conn.close()
         st.stop()
 
     st.session_state.messages = [
@@ -86,6 +118,7 @@ def _init_session() -> None:
         }
     ]
     st.session_state.reservation_data = {}
+    st.session_state.awaiting_approval_id = None
 
 
 def _reset_session() -> None:
@@ -96,14 +129,21 @@ def _reset_session() -> None:
         except Exception:
             pass
 
-    for key in ["app", "weaviate_client", "messages", "reservation_data"]:
+    if conn := st.session_state.get("postgres_conn"):
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    for key in ["app", "weaviate_client", "postgres_conn", "messages",
+                "reservation_data", "awaiting_approval_id"]:
         st.session_state.pop(key, None)
 
     st.rerun()
 
 
 # ---------------------------------------------------------------------------
-# Read reservation_data from the graph's MemorySaver
+# Helpers
 # ---------------------------------------------------------------------------
 
 def _get_reservation_data() -> dict:
@@ -115,6 +155,42 @@ def _get_reservation_data() -> dict:
         return {}
 
 
+def _get_reservation_status(reservation_id: int) -> Optional[str]:
+    """Poll DB for the current status of a reservation."""
+    try:
+        row = sql_store.get_reservation_by_id(reservation_id)
+        return row["status"] if row else None
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Approval polling
+# ---------------------------------------------------------------------------
+
+def _check_for_admin_decision() -> None:
+    """
+    Called on each rerun while awaiting_approval_id is set.
+    Polls the DB; when the status changes from 'pending', resumes the graph.
+    """
+    reservation_id: int = st.session_state.awaiting_approval_id
+    status = _get_reservation_status(reservation_id)
+
+    if status and status != "pending":
+        with st.spinner("Admin decided — processing your reservation…"):
+            result = resume_after_admin_decision(
+                st.session_state.app, status, reservation_id
+            )
+        st.session_state.messages.append({"role": "assistant", "content": result.reply})
+        st.session_state.reservation_data = _get_reservation_data()
+        st.session_state.awaiting_approval_id = None
+        st.rerun()
+    else:
+        # Still pending — wait and poll again
+        time.sleep(4)
+        st.rerun()
+
+
 # ---------------------------------------------------------------------------
 # Sidebar
 # ---------------------------------------------------------------------------
@@ -124,16 +200,13 @@ def _render_sidebar(status: dict[str, bool]) -> None:
         st.title("CityPark Assistant")
         st.divider()
 
-        # ── Service status ────────────────────────────────────────────────
         st.subheader("Services")
         for name, ok in status.items():
             icon = "🟢" if ok else "🔴"
-            label = name.capitalize()
-            st.markdown(f"{icon} &nbsp; **{label}**", unsafe_allow_html=True)
+            st.markdown(f"{icon} &nbsp; **{name.capitalize()}**", unsafe_allow_html=True)
 
         st.divider()
 
-        # ── Reservation panel ─────────────────────────────────────────────
         st.subheader("Reservation Details")
         data: dict = st.session_state.get("reservation_data", {})
 
@@ -157,9 +230,12 @@ def _render_sidebar(status: dict[str, bool]) -> None:
             if data.get("total_cost") is not None:
                 st.markdown(f"**Total cost** &nbsp; €{float(data['total_cost']):.2f}")
 
+            # Show approval status badge
+            if data.get("reservation_id") and st.session_state.get("awaiting_approval_id"):
+                st.warning("⏳ Pending admin approval")
+
         st.divider()
 
-        # ── New conversation ──────────────────────────────────────────────
         if st.button("Reset conversation", type="secondary", use_container_width=True):
             _reset_session()
 
@@ -176,18 +252,32 @@ def main() -> None:
     )
 
     _init_session()
+
+    # Polling loop — runs on every rerun while waiting for admin
+    if st.session_state.get("awaiting_approval_id"):
+        _check_for_admin_decision()
+        # _check_for_admin_decision calls st.rerun() or st.stop() so we
+        # only reach here if it returned normally (shouldn't happen normally)
+
     status = _check_services()
     _render_sidebar(status)
 
     st.header("🚗 CityPark Premium Parking Assistant")
     st.caption("Ask about prices, availability, location, or make a reservation.")
 
-    # ── Render existing messages ──────────────────────────────────────────
+    # Render conversation history
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    # ── Handle new input ──────────────────────────────────────────────────
+    # Show waiting banner if interrupted
+    if st.session_state.get("awaiting_approval_id"):
+        rid = st.session_state.awaiting_approval_id
+        with st.chat_message("assistant"):
+            st.info(f"⏳ Reservation #{rid} is awaiting admin approval. This page refreshes automatically…")
+        return  # Don't accept new input while paused
+
+    # Normal chat input
     if prompt := st.chat_input("Ask about parking or make a reservation..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
@@ -196,17 +286,23 @@ def main() -> None:
         with st.chat_message("assistant"):
             with st.spinner("Thinking…"):
                 try:
-                    reply = chat(st.session_state.app, prompt)
+                    result: ChatResult = chat(st.session_state.app, prompt)
                 except Exception as exc:
-                    reply = (
-                        "I'm sorry, something went wrong on my end. "
-                        "Please try again or contact info@citypark.com or +31 20 555 0123."
+                    result = ChatResult(
+                        reply=(
+                            "I'm sorry, something went wrong on my end. "
+                            "Please try again or contact info@citypark.com."
+                        )
                     )
 
-            st.markdown(reply)
+            st.markdown(result.reply)
 
-        st.session_state.messages.append({"role": "assistant", "content": reply})
+        st.session_state.messages.append({"role": "assistant", "content": result.reply})
         st.session_state.reservation_data = _get_reservation_data()
+
+        if result.interrupted and result.interrupt_reservation_id:
+            st.session_state.awaiting_approval_id = result.interrupt_reservation_id
+
         st.rerun()
 
 

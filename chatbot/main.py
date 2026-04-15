@@ -29,7 +29,7 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.rule import Rule
 
-from src.chatbot.graph import build_graph, chat
+from src.chatbot.graph import build_graph, chat, ChatResult
 from src.config import get_settings
 from src.database.vector_store import get_weaviate_client
 from unittest.mock import MagicMock
@@ -124,22 +124,33 @@ def main() -> None:
             console.print()
             with console.status("[dim]Thinking…[/dim]", spinner="dots"):
                 try:
-                    reply = chat(app, user_input)
+                    result: ChatResult = chat(app, user_input)
                 except Exception as exc:
                     logger.error("Chat error: %s", exc, exc_info=True)
-                    reply = (
-                        "I'm sorry, something went wrong on my end. "
-                        "Please try again or contact info@citypark.com or +31 20 555 0123."
+                    result = ChatResult(
+                        reply=(
+                            "I'm sorry, something went wrong on my end. "
+                            "Please try again or contact info@citypark.com or +31 20 555 0123."
+                        )
                     )
 
             console.print(
                 Panel(
-                    Markdown(reply),
+                    Markdown(result.reply),
                     title="[bold green]Assistant[/bold green]",
                     border_style="green",
                     padding=(0, 1),
                 )
             )
+
+            if result.interrupted:
+                console.print(
+                    f"[yellow]⏳ Reservation #{result.interrupt_reservation_id} is pending admin "
+                    "approval via the Admin UI. Use the web UI (Streamlit) to receive the "
+                    "confirmation once the admin decides.[/yellow]"
+                )
+                break  # CLI can't poll — exit gracefully
+
             console.print()
 
     finally:

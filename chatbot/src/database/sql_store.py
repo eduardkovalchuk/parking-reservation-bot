@@ -164,6 +164,25 @@ def find_available_space(
 # Reservations
 # ---------------------------------------------------------------------------
 
+def calculate_cost(start_datetime: datetime, end_datetime: datetime) -> float:
+    """
+    Calculate the total cost for a reservation window.
+
+    Uses hourly rate capped at a daily maximum (ceil days).
+    Fetches current rates from the prices table.
+    """
+    hourly_price_row = get_price("hourly")
+    hourly_rate = float(hourly_price_row["amount"]) if hourly_price_row else 3.0
+    daily_max_row = get_price("daily_max")
+    daily_max = float(daily_max_row["amount"]) if daily_max_row else 25.0
+
+    duration_hours = (end_datetime - start_datetime).total_seconds() / 3600
+    duration_days = duration_hours / 24
+    cost_hourly = duration_hours * hourly_rate
+    cost_daily_cap = int(duration_days + 0.999) * daily_max  # ceil days
+    return round(min(cost_hourly, cost_daily_cap), 2)
+
+
 def create_reservation(
     space_id: int,
     customer_name: str,
@@ -177,17 +196,7 @@ def create_reservation(
 
     Returns the newly created reservation record.
     """
-    settings = get_settings()
-    hourly_price_row = get_price("hourly")
-    hourly_rate = float(hourly_price_row["amount"]) if hourly_price_row else 3.0
-    daily_max_row = get_price("daily_max")
-    daily_max = float(daily_max_row["amount"]) if daily_max_row else 25.0
-
-    duration_hours = (end_datetime - start_datetime).total_seconds() / 3600
-    duration_days = duration_hours / 24
-    cost_hourly = duration_hours * hourly_rate
-    cost_daily_cap = int(duration_days + 0.999) * daily_max  # ceil days
-    total_cost = round(min(cost_hourly, cost_daily_cap), 2)
+    total_cost = calculate_cost(start_datetime, end_datetime)
 
     with get_connection() as conn:
         with conn.cursor() as cur:

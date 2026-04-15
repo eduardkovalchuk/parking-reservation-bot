@@ -63,6 +63,20 @@ services:
     stdin_open: true
     tty: true
 
+  admin_api:
+    build:
+      context: ./admin_api
+      dockerfile: Dockerfile
+      target: production
+    ports:
+      - "${ADMIN_API_PORT}:${ADMIN_API_PORT}"
+    restart: on-failure
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   weaviate_data:
   postgres_data:

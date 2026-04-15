@@ -30,6 +30,7 @@ up:
 reset:
 	docker compose down -v
 	@make up
+	@$(PYTHON) -c "import time; print('Waiting for services...'); time.sleep(5)"
 	@make ingest
 
 ## Stop Docker services only (keep volumes)

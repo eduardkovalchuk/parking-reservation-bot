@@ -45,6 +45,7 @@ _nlp_engine = NlpEngineProvider(nlp_configuration={
                 "ORDINAL",     # ordinal numbers (first, second…)
                 "PERCENT",     # percentage values
                 "MONEY",       # monetary amounts (€15.00, EUR 3.00…)
+                "EVENT",       # temporal expressions (today, tomorrow, holidays…)
         ],
     },
 }).create_engine()

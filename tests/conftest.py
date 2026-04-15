@@ -25,6 +25,7 @@ def mock_env_vars(monkeypatch):
     monkeypatch.setenv("WEAVIATE_HOST", "localhost")
     monkeypatch.setenv("WEAVIATE_PORT", "8080")
     monkeypatch.setenv("WEAVIATE_GRPC_PORT", "50051")
+    monkeypatch.setenv("WEAVIATE_COLLECTION_NAME", "ParkingInfo")
     monkeypatch.setenv("POSTGRES_HOST", "localhost")
     monkeypatch.setenv("POSTGRES_PORT", "5432")
     monkeypatch.setenv("POSTGRES_DB", "parking_db")
@@ -56,7 +57,7 @@ def mock_db_connection(mocker):
 
 @pytest.fixture()
 def sample_reservation_data():
-    """Minimal valid reservation data dict."""
+    """Minimal valid reservation data dict (all user-collected fields)."""
     return {
         "name": "John",
         "surname": "Doe",
@@ -64,4 +65,22 @@ def sample_reservation_data():
         "start_datetime": "2026-04-01T09:00:00",
         "end_datetime": "2026-04-01T17:00:00",
         "space_type": "standard",
+    }
+
+
+@pytest.fixture()
+def sample_reservation_data_full():
+    """Reservation data dict including DB-assigned fields (space, cost)."""
+    return {
+        "name": "John",
+        "surname": "Doe",
+        "car_number": "ABC-1234",
+        "start_datetime": "2026-04-01T09:00:00",
+        "end_datetime": "2026-04-01T17:00:00",
+        "space_type": "standard",
+        "space_id": 1,
+        "floor": "B1",
+        "space_number": "S01",
+        "reservation_id": 99,
+        "total_cost": 24.0,
     }

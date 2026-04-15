@@ -30,9 +30,9 @@ class Settings(BaseSettings):
     postgres_password: str
 
     # RAG
-    retrieval_k: int = 3
-    chunk_size: int = 500
-    chunk_overlap: int = 50
+    retrieval_k: int = 4
+    chunk_size: int = 450
+    chunk_overlap: int = 70
 
 
 @lru_cache(maxsize=1)

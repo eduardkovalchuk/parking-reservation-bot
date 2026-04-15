@@ -18,6 +18,11 @@ from pathlib import Path
 # Ensure project root is on path when run directly
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+# Load .env into os.environ BEFORE any LangChain/LangSmith imports
+# so that tracing env vars (LANGSMITH_API_KEY, etc.) are picked up.
+from dotenv import load_dotenv
+load_dotenv()
+
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel

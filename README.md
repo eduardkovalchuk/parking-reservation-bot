@@ -138,7 +138,7 @@ Reservations submitted by the chatbot arrive with status **pending** and must be
 http://localhost:8510
 ```
 
-Login with the credentials set in `.env` (`ADMIN_USERNAME` / `ADMIN_PASSWORD`).  
+Login with the credentials set in `.env` (`ADMIN_USERNAME` / `ADMIN_PASSWORD`), default creads are **admin**/**admin** from `.env.template`.
 The Admin UI lists all reservations and lets you approve or reject pending ones with a single click. The chatbot automatically detects the decision and resumes the conversation.
 
 The Admin API also exposes a REST interface and interactive docs:

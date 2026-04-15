@@ -19,7 +19,7 @@ from typing import Optional
 
 import secrets
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Security
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
@@ -98,14 +98,17 @@ class ReservationStatus(str, Enum):
 # ---------------------------------------------------------------------------
 
 @app.get("/api/reservations", response_model=list[ReservationResponse])
-def list_reservations(status: Optional[ReservationStatus] = Query(None)):
+def list_reservations(
+    status: Optional[ReservationStatus] = Query(None),
+    _: str = Depends(verify_admin),
+):
     """List reservations, optionally filtered by status."""
     rows = db.list_reservations(status.value if status else None)
     return [ReservationResponse(**r) for r in rows]
 
 
 @app.get("/api/reservations/{reservation_id}", response_model=ReservationResponse)
-def get_reservation(reservation_id: int):
+def get_reservation(reservation_id: int, _: str = Depends(verify_admin)):
     """Get a single reservation by ID."""
     row = db.get_reservation(reservation_id)
     if not row:
@@ -172,16 +175,7 @@ _STATIC_DIR = Path(__file__).parent / "static"
 
 
 @app.get("/", include_in_schema=False)
-def admin_ui(credentials: HTTPBasicCredentials = Depends(_security)):
-    settings = get_settings()
-    correct_username = secrets.compare_digest(credentials.username, settings.admin_username)
-    correct_password = secrets.compare_digest(credentials.password, settings.admin_password)
-    if not (correct_username and correct_password):
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid credentials",
-            headers={"WWW-Authenticate": "Basic"},
-        )
+def admin_ui():
     return FileResponse(_STATIC_DIR / "index.html")
 
 

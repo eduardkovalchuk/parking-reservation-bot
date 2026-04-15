@@ -236,7 +236,7 @@ def _render_sidebar(status: dict[str, bool]) -> None:
 
         st.divider()
 
-        if st.button("Reset conversation", type="secondary", use_container_width=True):
+        if st.button("New conversation", type="secondary", use_container_width=True):
             _reset_session()
 
 
@@ -268,10 +268,14 @@ def main() -> None:
     if st.session_state.get("awaiting_approval_id"):
         with st.chat_message("assistant"):
             _approval_polling()
-        return  # disable chat input while paused
 
-    # Normal chat input
-    if prompt := st.chat_input("Ask about parking or make a reservation..."):
+    # Chat input — disabled while awaiting admin approval so the page stays
+    # in place and doesn't scroll to the top from a layout shift.
+    awaiting = bool(st.session_state.get("awaiting_approval_id"))
+    if prompt := st.chat_input(
+        "Ask about parking or make a reservation...",
+        disabled=awaiting,
+    ):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)

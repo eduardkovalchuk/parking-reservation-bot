@@ -8,7 +8,7 @@ An intelligent parking reservation chatbot built with **LangChain**, **LangGraph
 
 ![Graph](data/static/graph.png)
 
-The **agent** is a LangGraph ReAct agent (`langchain.agents.create_agent`) with three tools:
+The **agent** is a LangGraph ReAct agent with three tools:
 
 | Tool | Purpose |
 |------|---------|
@@ -29,44 +29,49 @@ The **agent** is a LangGraph ReAct agent (`langchain.agents.create_agent`) with 
 
 ```
 parking-reservation-bot/
-├── main.py                      # CLI entry point
-├── docker-compose.yml           # Weaviate + PostgreSQL
+├── docker-compose.yml           # All services: Weaviate + PostgreSQL + chatbot
+├── Makefile                     # Convenience commands (optional)
 ├── requirements.txt
-├── .env.example
+├── .env.template
 ├── data/
 │   ├── static/
-│   │   └── parking_info.md      # Source document (loaded into Weaviate)
+│   │   └── parking_info.md      # Source document (loaded into Weaviate on startup)
 │   └── seeds/
 │       └── init_db.sql          # PostgreSQL schema + seed data (150 spaces)
-├── src/
-│   ├── config.py                # Pydantic-settings configuration
-│   ├── database/
-│   │   ├── vector_store.py      # Weaviate client & ingestion
-│   │   └── sql_store.py         # PostgreSQL queries (prices, availability, reservations)
-│   ├── rag/
-│   │   ├── retriever.py         # Hybrid retriever (Weaviate + PostgreSQL)
-│   │   └── chain.py             # RAG answer generation chain
-│   ├── chatbot/
-│   │   ├── state.py             # AgentState (MessagesState + reservation_data + guardrail flags)
-│   │   ├── tools.py             # ReAct agent tools
-│   │   ├── agent.py             # create_agent() setup with system prompt
-│   │   ├── nodes.py             # Guardrail node functions
-│   │   └── graph.py             # Outer graph assembly & chat() helper
-│   ├── guardrails/
-│   │   └── filters.py           # Presidio-based PII detection & output sanitisation
-│   └── evaluation/
-│       └── metrics.py           # Precision@K, Recall@K, latency, LLM-as-judge
-├── scripts/
-│   ├── ingest_data.py           # Load static data into Weaviate
-│   └── evaluate.py              # RAG evaluation suite
-└── tests/
-    ├── conftest.py
-    ├── test_chatbot.py          # Guardrail nodes + agent tools
-    ├── test_guardrails.py
-    ├── test_retriever.py
-    ├── test_vector_store.py
-    ├── test_sql_store.py
-    └── test_evaluation.py
+└── chatbot/
+    ├── Dockerfile
+    ├── entrypoint.sh            # Ingest data → start Streamlit
+    ├── main.py                  # CLI entry point
+    ├── streamlit_app.py         # Web UI
+    ├── src/
+    │   ├── config.py            # Pydantic-settings configuration
+    │   ├── chatbot/
+    │   │   ├── state.py         # AgentState (MessagesState + reservation_data + guardrail flags)
+    │   │   ├── tools.py         # ReAct agent tools
+    │   │   ├── agent.py         # create_agent() setup with system prompt
+    │   │   ├── nodes.py         # Guardrail node functions
+    │   │   └── graph.py         # Outer graph assembly & chat() helper
+    │   ├── database/
+    │   │   ├── vector_store.py  # Weaviate client & ingestion
+    │   │   └── sql_store.py     # PostgreSQL queries (prices, availability, reservations)
+    │   ├── rag/
+    │   │   ├── retriever.py     # Hybrid retriever (Weaviate + PostgreSQL)
+    │   │   └── chain.py         # RAG answer generation chain
+    │   ├── guardrails/
+    │   │   └── filters.py       # Presidio-based PII detection & output sanitisation
+    │   └── evaluation/
+    │       └── metrics.py       # Precision@K, Recall@K, latency, LLM-as-judge
+    ├── scripts/
+    │   ├── ingest_data.py       # Load static data into Weaviate
+    │   └── evaluate.py          # RAG evaluation suite
+    └── tests/
+        ├── conftest.py
+        ├── test_chatbot.py
+        ├── test_guardrails.py
+        ├── test_retriever.py
+        ├── test_vector_store.py
+        ├── test_sql_store.py
+        └── test_evaluation.py
 ```
 
 ---
@@ -75,97 +80,79 @@ parking-reservation-bot/
 
 ### Prerequisites
 
-- Python 3.11+
-- Make
 - Docker & Docker Compose
 - OpenAI API key
+- _(optional)_ Make
 
-### 1. Install dependencies
+### 1. Configure environment
 
 ```bash
-make init
+cp .env.template .env
+# Fill in OPENAI_API_KEY and optionally LANGSMITH_API_KEY
 ```
 
-Creates `.venv`, installs packages, and downloads the spaCy NER model.
-
-### 2. Configure environment
+### 2. Start all services
 
 ```bash
-cp .env.example .env
-# Fill in OPENAI_API_KEY and LANGSMITH_API_KEY (optional)
+docker compose up -d
 ```
 
-### 3. Start services & ingest data
+This starts Weaviate, PostgreSQL, and the chatbot. On first boot the chatbot container automatically ingests `parking_info.md` into Weaviate before launching the UI.
 
-```bash
-make up      # Start Weaviate + PostgreSQL
-make ingest  # Chunk parking_info.md and load into Weaviate
+### 3. Open the web UI
+
+```
+http://localhost:8501
 ```
 
-Or to wipe and rebuild everything from scratch:
+### Full reset (wipe all data and restart)
 
 ```bash
-make reset   # down -v → up → ingest (waits for Weaviate to be ready)
-```
-
-### 4. Run the chatbot
-
-```bash
-make chat
+docker compose down -v
+docker compose up -d
 ```
 
 ---
 
-## Make Commands
+## Make Commands _(optional)_
+
+If you have Make installed, the following shortcuts are available:
 
 | Command | Description |
 |---------|-------------|
-| `make init` | Create virtualenv and install dependencies |
-| `make up` | Start Docker services (Weaviate + PostgreSQL) |
-| `make down` | Stop Docker services (keep data) |
-| `make reset` | Full wipe and reinitialise (down -v → up → ingest) |
-| `make ingest` | Load static parking data into Weaviate |
-| `make chat` | Run the chatbot CLI |
-| `make test` | Run unit tests (no live services needed) |
-| `make evaluate` | Run RAG evaluation suite (requires live services) |
-| `make graph` | Render graph topology to `graph.png` |
+| `make up` | Start all services |
+| `make down` | Stop services (keep data) |
+| `make reset` | Wipe volumes and restart |
+| `make chat` | Start chatbot CLI inside the container |
+| `make test` | Run unit tests inside the container |
+| `make evaluate` | Run RAG evaluation suite inside the container |
+| `make graph` | Render LangGraph diagram to `./graph.png` |
 
 ---
 
 ## Running Tests
 
 ```bash
+# With Make
 make test
-```
 
-Unit tests mock all external services (Weaviate, PostgreSQL, OpenAI) — no Docker required.
+# Without Make
+docker compose exec chatbot python -m pytest tests/ -v
+```
 
 ---
 
 ## Running the Evaluation Suite
 
-Requires live Docker services and ingested data:
+Requires services to be running:
 
 ```bash
+# With Make
 make evaluate
 
-# Skip LLM-as-judge (faster/cheaper)
-make evaluate NO_LLM_JUDGE=1
-
-# Save results to JSON
-make evaluate OUTPUT=evaluation_report.json
+# Without Make
+docker compose exec chatbot python scripts/evaluate.py
 ```
-
-### Metrics
-
-| Metric | Description |
-|--------|-------------|
-| **Precision@K** | Fraction of retrieved chunks that are relevant |
-| **Recall@K** | Fraction of relevant chunks that were retrieved |
-| **Hit Rate@K** | Whether any relevant chunk appears in top-K |
-| **Faithfulness** | LLM judge: does the answer stay within the retrieved context? |
-| **Answer Relevance** | LLM judge: is the answer on-point for the question? |
-| **Latency p50/p95/p99** | End-to-end response time percentiles (ms) |
 
 ---
 
@@ -200,15 +187,15 @@ LANGSMITH_ENDPOINT=https://api.smith.langchain.com
 | `OPENAI_API_KEY` | — | **Required** |
 | `OPENAI_CHAT_MODEL` | `gpt-4o` | LLM for agent reasoning |
 | `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model for Weaviate |
-| `WEAVIATE_HOST` | `localhost` | Weaviate host |
+| `WEAVIATE_HOST` | `localhost` | Weaviate host (auto-overridden to `weaviate` in Docker) |
 | `WEAVIATE_PORT` | `8080` | Weaviate HTTP port |
 | `WEAVIATE_GRPC_PORT` | `50051` | Weaviate gRPC port |
 | `WEAVIATE_COLLECTION_NAME` | `ParkingInfo` | Weaviate collection |
-| `POSTGRES_HOST` | `localhost` | PostgreSQL host |
+| `POSTGRES_HOST` | `localhost` | PostgreSQL host (auto-overridden to `postgres` in Docker) |
 | `POSTGRES_PORT` | `5432` | PostgreSQL port |
 | `POSTGRES_DB` | `parking_db` | Database name |
-| `POSTGRES_USER` | `parking_user` | DB username |
-| `POSTGRES_PASSWORD` | `parking_password` | DB password |
+| `POSTGRES_USER` | `postgres` | DB username |
+| `POSTGRES_PASSWORD` | `postgres` | DB password |
 | `RETRIEVAL_K` | `4` | Number of vector search results |
 | `CHUNK_SIZE` | `450` | Document chunk size (characters) |
 | `CHUNK_OVERLAP` | `70` | Chunk overlap (characters) |

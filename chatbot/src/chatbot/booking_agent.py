@@ -9,10 +9,14 @@ Responsibilities:
 """
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated, Literal, Optional
 
+from fastmcp import Client as MCPClient
+from fastmcp.client.transports import SSETransport
 from langchain.agents import create_agent
 from langchain.agents.structured_output import ToolStrategy
 from langchain_core.messages import ToolMessage
@@ -64,7 +68,13 @@ Call `create_pending_reservation`. It reads all required fields from state autom
 If Step 1 succeeded, call `request_admin_approval` with the reservation_id.
 The graph pauses here until an admin decides.
 
-### Step 3 — Return a structured BookingResult
+### Step 3 — Log the confirmed reservation (approved path only)
+If the admin approved, call `write_reservation_to_log`.
+It reads all required data from state automatically.
+If logging fails, continue anyway — the reservation is already confirmed in the database.
+Skip this step if the admin rejected or no space was available.
+
+### Step 4 — Return a structured BookingResult
 After every outcome (success, rejection, or no space), output a BookingResult:
 - Admin approved  → status="confirmed", fill reservation_id, space_number, floor, total_cost
 - Admin rejected  → status="cancelled"
@@ -180,7 +190,60 @@ def create_booking_tools() -> list:
         logger.info("Admin decision for reservation #%d: %s", reservation_id, status)
         return f"Admin decision: {status}"
 
-    return [create_pending_reservation, request_admin_approval]
+    @tool
+    def write_reservation_to_log(
+        state: Annotated[dict, InjectedState],
+        tool_call_id: Annotated[str, InjectedToolCallId],
+    ) -> Command:
+        """Persist the confirmed reservation to the MCP reservation log server.
+
+        Reads all required fields from state automatically.
+        Call this only after the admin has approved the reservation.
+        """
+        data: dict = state.get("reservation_data") or {}
+        settings = get_settings()
+        approval_time = datetime.now(tz=timezone.utc).replace(tzinfo=None).isoformat()
+
+        async def _call_mcp() -> list:
+            transport = SSETransport(f"http://{settings.mcp_server_host}:{settings.mcp_server_port}/sse")
+            async with MCPClient(transport) as client:
+                return await client.call_tool(
+                    "write_confirmed_reservation",
+                    {
+                        "api_key": settings.mcp_api_key,
+                        "reservation_id": data["reservation_id"],
+                        "customer_name": data["name"],
+                        "customer_surname": data["surname"],
+                        "car_number": data["car_number"],
+                        "start_datetime": data["start_datetime"],
+                        "end_datetime": data["end_datetime"],
+                        "approval_time": approval_time,
+                    },
+                )
+
+        try:
+            # Run in a dedicated thread so asyncio.run() always gets a fresh
+            # event loop — safe regardless of whether the caller (Streamlit)
+            # has a running loop in the current thread.
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                result = pool.submit(asyncio.run, _call_mcp()).result(timeout=30)
+            content = str(result[0].text) if result else "Logged."
+            logger.info(
+                "Reservation #%d logged via MCP server.", data.get("reservation_id")
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("MCP log write failed for reservation #%s: %s", data.get("reservation_id"), exc)
+            content = f"Warning: reservation confirmed but MCP logging failed: {exc}"
+
+        return Command(
+            update={
+                "messages": [
+                    ToolMessage(content=content, tool_call_id=tool_call_id)
+                ]
+            }
+        )
+
+    return [create_pending_reservation, request_admin_approval, write_reservation_to_log]
 
 
 # ---------------------------------------------------------------------------

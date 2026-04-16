@@ -57,6 +57,8 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      mcp_server:
+        condition: service_healthy
     volumes:
       # Allow parking_info.md updates without rebuilding the image
       - ./chatbot/data:/app/data:ro
@@ -76,6 +78,24 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+
+  mcp_server:
+    build:
+      context: ./mcp_server
+    ports:
+      - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
+    restart: on-failure
+    env_file:
+      - .env
+    environment:
+      RESERVATIONS_FILE: /data/reservations/confirmed_reservations.txt
+    volumes:
+      - ./data/reservations:/data/reservations
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:${MCP_SERVER_PORT}/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   weaviate_data:

@@ -91,6 +91,9 @@ logs/
 *.log
 *.log.*
 
+# Reservation log (written by MCP server at runtime)
+data/reservations/*.txt
+
 # OS
 .DS_Store
 Thumbs.db

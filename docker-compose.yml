@@ -45,8 +45,8 @@ services:
 
   chatbot:
     build:
-      context: .
-      dockerfile: chatbot/Dockerfile
+      context: ./chatbot
+      dockerfile: Dockerfile
     ports:
       - "8501:8501"
     restart: on-failure
@@ -59,7 +59,7 @@ services:
         condition: service_healthy
     volumes:
       # Allow parking_info.md updates without rebuilding the image
-      - ./data:/app/data:ro
+      - ./chatbot/data:/app/data:ro
     stdin_open: true
     tty: true
 

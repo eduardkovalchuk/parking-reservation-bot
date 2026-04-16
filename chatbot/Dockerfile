@@ -16,16 +16,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Download spaCy model — baked into image (~150 MB, cached by Docker layer)
 RUN python -m spacy download en_core_web_lg
 
-# Copy application source (chatbot/ subfolder contents → /app)
-COPY chatbot/src         ./src
-COPY chatbot/scripts     ./scripts
-COPY chatbot/tests       ./tests
-COPY chatbot/main.py     ./main.py
-COPY chatbot/streamlit_app.py ./streamlit_app.py
-COPY chatbot/entrypoint.sh    ./entrypoint.sh
-
-# Copy static data (needed by ingest script at startup)
-COPY data/ ./data
+# Copy application source
+COPY . .
 
 RUN chmod +x entrypoint.sh
 

@@ -19,7 +19,8 @@ RUN python -m spacy download en_core_web_lg
 # Copy application source
 COPY . .
 
-RUN chmod +x entrypoint.sh
+RUN chmod +x entrypoint.sh \
+    && sed -i 's/\r//' entrypoint.sh
 
 ENV PYTHONPATH=/app
 ENV STREAMLIT_SERVER_ADDRESS=0.0.0.0

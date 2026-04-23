@@ -87,7 +87,11 @@ def _init_session() -> None:
             f"postgresql://{settings.postgres_user}:{settings.postgres_password}"
             f"@{settings.postgres_host}:{settings.postgres_port}/{settings.postgres_db}"
         )
-        postgres_conn = psycopg.connect(conn_string, autocommit=True)
+        postgres_conn = psycopg.connect(
+            conn_string,
+            autocommit=True,
+            options="-c search_path=langgraph,public",
+        )
         checkpointer = PostgresSaver(postgres_conn)
         checkpointer.setup()
         st.session_state.postgres_conn = postgres_conn

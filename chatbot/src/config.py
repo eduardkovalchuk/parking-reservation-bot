@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     chunk_size: int = 450
     chunk_overlap: int = 70
 
+    # MCP Reservation Logger
+    mcp_server_host: str
+    mcp_server_port: int
+    mcp_api_key: str
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

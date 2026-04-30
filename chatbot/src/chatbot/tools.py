@@ -19,11 +19,12 @@ from langgraph.prebuilt import InjectedState
 from langgraph.types import Command
 
 from src.config import get_settings
+from src.database import sql_store
 from src.rag import retriever as rag_retriever
 
 logger = logging.getLogger(__name__)
 
-_REQUIRED_FIELDS = ("name", "surname", "car_number", "start_datetime", "end_datetime")
+_REQUIRED_FIELDS = ("name", "surname", "car_number", "start_datetime", "end_datetime", "space_type")
 
 
 def create_tools(weaviate_client: weaviate.WeaviateClient) -> list:
@@ -64,8 +65,7 @@ def create_tools(weaviate_client: weaviate.WeaviateClient) -> list:
         if not data:
             return (
                 "No reservation data collected yet.\n"
-                f"Required fields: {', '.join(_REQUIRED_FIELDS)}\n"
-                "Optional: space_type (standard | compact | handicapped | ev) — defaults to standard."
+                f"Required fields: {', '.join(_REQUIRED_FIELDS)}"
             )
 
         lines = []
@@ -77,9 +77,6 @@ def create_tools(weaviate_client: weaviate.WeaviateClient) -> list:
             else:
                 lines.append(f"  {field}: MISSING")
                 missing.append(field)
-
-        space_type = data.get("space_type", "standard (default)")
-        lines.append(f"  space_type: {space_type}")
 
         summary = "Reservation draft:\n" + "\n".join(lines)
         if missing:
@@ -116,7 +113,7 @@ def create_tools(weaviate_client: weaviate.WeaviateClient) -> list:
                 "car_number": car_number,
                 "start_datetime": start_datetime,
                 "end_datetime": end_datetime,
-                "space_type": space_type,
+                "space_type": space_type.lower() if space_type else None,
             }.items()
             if v is not None
         }
@@ -130,4 +127,73 @@ def create_tools(weaviate_client: weaviate.WeaviateClient) -> list:
             }
         )
 
-    return [retrieve_parking_info, get_reservation_draft, update_reservation_draft]
+    @tool
+    def calculate_reservation_cost(start_datetime: str, end_datetime: str) -> str:
+        """Calculate the exact cost for a reservation given start and end datetimes.
+
+        Use this when the user asks how much their reservation will cost before confirming.
+        Accepts ISO-8601 strings (e.g. '2026-04-20T09:00:00').
+        Returns the total cost in EUR with a breakdown (hourly rate vs daily cap).
+        """
+        from datetime import datetime as dt
+        try:
+            start = dt.fromisoformat(start_datetime)
+            end = dt.fromisoformat(end_datetime)
+        except ValueError as exc:
+            return f"Could not parse datetimes: {exc}"
+
+        if end <= start:
+            return "End datetime must be after start datetime."
+
+        total = sql_store.calculate_cost(start, end)
+        duration_hours = (end - start).total_seconds() / 3600
+        return (
+            f"Estimated cost: €{total:.2f} "
+            f"({duration_hours:.1f} hours at the current rates)."
+        )
+
+    @tool
+    def submit_for_booking(
+        state: Annotated[dict, InjectedState],
+        tool_call_id: Annotated[str, InjectedToolCallId],
+    ) -> Command:
+        """Hand off to the booking agent to create and confirm the reservation.
+
+        Only call this after:
+        1. ALL fields are collected (name, surname, car_number, start_datetime, end_datetime, space_type).
+        2. The user has explicitly said "yes" / "confirm" / "proceed".
+        Never call this proactively — always wait for explicit user confirmation.
+        """
+        data: dict = state.get("reservation_data") or {}
+        missing = [f for f in _REQUIRED_FIELDS if not data.get(f)]
+        if missing:
+            return Command(
+                update={
+                    "messages": [
+                        ToolMessage(
+                            content=f"Cannot submit — still missing: {', '.join(missing)}. Collect them first.",
+                            tool_call_id=tool_call_id,
+                        )
+                    ]
+                }
+            )
+
+        return Command(
+            update={
+                "booking_requested": True,
+                "messages": [
+                    ToolMessage(
+                        content="All fields collected. Handing off to booking agent.",
+                        tool_call_id=tool_call_id,
+                    )
+                ],
+            }
+        )
+
+    return [
+        retrieve_parking_info,
+        get_reservation_draft,
+        update_reservation_draft,
+        calculate_reservation_cost,
+        submit_for_booking,
+    ]

@@ -54,7 +54,9 @@ Required fields to collect:
   - start_datetime: reservation start
   - end_datetime  : reservation end
   - space_type    : ALWAYS ask explicitly — "What type of parking space do you need? \
-(standard, compact, handicapped, or EV)" — never silently default it.
+    (standard, compact, handicapped, or EV)" — never silently default it
+  - total_cost    : estimated cost - once start_datetime and end_datetime are known, \
+    call `calculate_reservation_cost` to calculate it
 
 Accept any natural date/time expression ("today at 9pm", "tomorrow noon", "Friday at 3") \
 and convert it to ISO-8601 yourself before calling `update_reservation_draft`. \
@@ -64,7 +66,28 @@ After the user provides value(s), call `update_reservation_draft` to store them,
 then call `get_reservation_draft` to check what is still missing.
 
 When all fields (including space_type) are collected, show the user a clear confirmation \
-summary and let them know their reservation details are ready for processing.
+summary:
+
+  Name: <name> <surname>
+  Plate: <car_number>
+  From: <start_datetime>  To: <end_datetime>
+  Space type: <space_type>
+  Estimated cost: <total_cost>
+
+Then ask: "Shall I submit this reservation for approval?"
+
+When the user explicitly confirms (says "yes", "go ahead", "confirm", etc.), \
+call `submit_for_booking`. Do NOT call it without explicit confirmation. \
+After calling it, let the user know their request has been forwarded and they \
+will be notified once an admin reviews it.
+
+## After a booking attempt
+
+When the conversation contains a ToolMessage named **BookingResult**, the booking agent \
+has finished. Read its content and compose the user-facing reply — do not call any other tools:
+- **confirmed**: congratulate warmly, include Reservation ID, space number, floor, total cost.
+- **cancelled**: apologise professionally, suggest contacting info@citypark.com or +31 20 555 0123.
+- **no_space_available**: apologise, suggest trying different dates or a different space type.
 
 ## Guardrails
 - Stay on-topic: politely decline questions unrelated to parking.
@@ -75,7 +98,7 @@ Today's date: {today}\
 """
 
 
-def create_parking_agent(weaviate_client: weaviate.WeaviateClient):
+def create_chat_agent(weaviate_client: weaviate.WeaviateClient):
     """Build and return a compiled ReAct agent subgraph."""
     settings = get_settings()
 

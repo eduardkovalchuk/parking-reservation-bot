@@ -7,6 +7,8 @@ services:
       - "${WEAVIATE_PORT}:${WEAVIATE_PORT}"
       - "${WEAVIATE_GRPC_PORT}:${WEAVIATE_GRPC_PORT}"
     restart: on-failure
+    env_file:
+      - .env
     environment:
       QUERY_DEFAULTS_LIMIT: 25
       AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
@@ -18,7 +20,7 @@ services:
     volumes:
       - weaviate_data:/var/lib/weaviate
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://${WEAVIATE_HOST}:${WEAVIATE_PORT}/v1/.well-known/ready"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:${WEAVIATE_PORT}/v1/.well-known/ready"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -37,6 +39,60 @@ services:
       - ./data/seeds/init_db.sql:/docker-entrypoint-initdb.d/init_db.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  chatbot:
+    build:
+      context: ./chatbot
+      dockerfile: Dockerfile
+    ports:
+      - "8501:8501"
+    restart: on-failure
+    env_file:
+      - .env
+    depends_on:
+      weaviate:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      mcp_server:
+        condition: service_healthy
+    volumes:
+      # Allow parking_info.md updates without rebuilding the image
+      - ./chatbot/data:/app/data:ro
+    stdin_open: true
+    tty: true
+
+  admin_api:
+    build:
+      context: ./admin_api
+      dockerfile: Dockerfile
+      target: production
+    ports:
+      - "${ADMIN_API_PORT}:${ADMIN_API_PORT}"
+    restart: on-failure
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  mcp_server:
+    build:
+      context: ./mcp_server
+    ports:
+      - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
+    restart: on-failure
+    env_file:
+      - .env
+    environment:
+      RESERVATIONS_FILE: /data/reservations/confirmed_reservations.txt
+    volumes:
+      - ./data/reservations:/data/reservations
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:${MCP_SERVER_PORT}/health')"]
       interval: 10s
       timeout: 5s
       retries: 5

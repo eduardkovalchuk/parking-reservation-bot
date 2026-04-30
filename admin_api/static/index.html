@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CityPark Admin</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f7fa; color: #333; }
+
+        /* ── Login modal ───────────────────────────────────────────── */
+        .modal-backdrop {
+            position: fixed; inset: 0; background: rgba(0,0,0,.45);
+            display: flex; align-items: center; justify-content: center; z-index: 200;
+        }
+        .modal-backdrop.hidden { display: none; }
+        .modal-box {
+            background: #fff; border-radius: 12px; padding: 36px 32px;
+            width: 100%; max-width: 380px; box-shadow: 0 8px 32px rgba(0,0,0,.18);
+        }
+        .modal-box h2 { font-size: 20px; font-weight: 700; margin-bottom: 6px; }
+        .modal-box p  { font-size: 14px; color: #6b7280; margin-bottom: 24px; }
+        .field { margin-bottom: 16px; }
+        .field label { display: block; font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 6px; }
+        .field input {
+            width: 100%; padding: 9px 12px; border: 1px solid #d1d5db;
+            border-radius: 7px; font-size: 14px; outline: none;
+        }
+        .field input:focus { border-color: #1a56db; box-shadow: 0 0 0 3px rgba(26,86,219,.15); }
+        .login-btn {
+            width: 100%; padding: 10px; background: #1a56db; color: #fff;
+            border: none; border-radius: 7px; font-size: 15px; font-weight: 600;
+            cursor: pointer; margin-top: 4px;
+        }
+        .login-btn:hover { background: #1e40af; }
+        .login-error { color: #dc2626; font-size: 13px; margin-top: 12px; text-align: center; min-height: 18px; }
+
+        /* ── Main UI ───────────────────────────────────────────────── */
+        .header { background: #1a56db; color: #fff; padding: 16px 24px; display: flex; align-items: center; justify-content: space-between; }
+        .header h1 { font-size: 20px; font-weight: 600; }
+        .header-right { display: flex; align-items: center; gap: 14px; }
+        #usernameLabel { font-size: 14px; opacity: .85; }
+        .logout-btn {
+            padding: 5px 14px; background: rgba(255,255,255,.15); color: #fff;
+            border: 1px solid rgba(255,255,255,.4); border-radius: 6px;
+            font-size: 13px; cursor: pointer;
+        }
+        .logout-btn:hover { background: rgba(255,255,255,.25); }
+        .container { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
+        .toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+        .toolbar select, .toolbar button { padding: 8px 14px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; background: #fff; cursor: pointer; }
+        .toolbar button { background: #1a56db; color: #fff; border-color: #1a56db; }
+        .toolbar button:hover { background: #1e40af; }
+        .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; text-transform: uppercase; }
+        .badge-pending { background: #fef3c7; color: #92400e; }
+        .badge-confirmed { background: #d1fae5; color: #065f46; }
+        .badge-cancelled { background: #fee2e2; color: #991b1b; }
+        .badge-completed { background: #dbeafe; color: #1e40af; }
+        table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        th { background: #f9fafb; text-align: left; padding: 12px 14px; font-size: 13px; color: #6b7280; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; border-bottom: 1px solid #e5e7eb; }
+        td { padding: 12px 14px; font-size: 14px; border-bottom: 1px solid #f3f4f6; }
+        tr:last-child td { border-bottom: none; }
+        tr:hover td { background: #f9fafb; }
+        .actions { display: flex; gap: 6px; }
+        .btn { padding: 6px 12px; border: none; border-radius: 5px; font-size: 13px; font-weight: 500; cursor: pointer; }
+        .btn-approve { background: #059669; color: #fff; }
+        .btn-approve:hover { background: #047857; }
+        .btn-reject { background: #dc2626; color: #fff; }
+        .btn-reject:hover { background: #b91c1c; }
+        .btn:disabled { opacity: .5; cursor: not-allowed; }
+        .empty { text-align: center; padding: 48px 16px; color: #9ca3af; font-size: 15px; }
+        .toast { position: fixed; bottom: 24px; right: 24px; padding: 12px 20px; border-radius: 8px; color: #fff; font-size: 14px; opacity: 0; transition: opacity .3s; z-index: 100; }
+        .toast.show { opacity: 1; }
+        .toast-ok { background: #059669; }
+        .toast-err { background: #dc2626; }
+    </style>
+</head>
+<body>
+
+<!-- Login modal -->
+<div class="modal-backdrop" id="loginModal">
+    <div class="modal-box">
+        <h2>🚗 CityPark Admin</h2>
+        <p>Sign in to manage reservations</p>
+        <form id="loginForm" onsubmit="submitLogin(event)">
+            <div class="field">
+                <label for="inputUser">Username</label>
+                <input id="inputUser" type="text" autocomplete="username" required>
+            </div>
+            <div class="field">
+                <label for="inputPass">Password</label>
+                <input id="inputPass" type="password" autocomplete="current-password" required>
+            </div>
+            <button class="login-btn" type="submit">Sign in</button>
+            <div class="login-error" id="loginError"></div>
+        </form>
+    </div>
+</div>
+
+<!-- Main UI (hidden until logged in) -->
+<div id="app" style="display:none">
+    <div class="header">
+        <h1>🚗 CityPark Admin Panel</h1>
+        <div class="header-right">
+            <span id="usernameLabel"></span>
+            <button class="logout-btn" onclick="logout()">Sign out</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="toolbar">
+            <select id="statusFilter">
+                <option value="">All statuses</option>
+                <option value="pending" selected>Pending</option>
+                <option value="confirmed">Confirmed</option>
+                <option value="cancelled">Cancelled</option>
+                <option value="completed">Completed</option>
+            </select>
+            <button onclick="loadReservations()">Refresh</button>
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Customer</th>
+                    <th>Car</th>
+                    <th>Space</th>
+                    <th>Period</th>
+                    <th>Cost</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="tbody"></tbody>
+        </table>
+    </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+    // Credentials stored in memory only — cleared on page refresh / sign-out.
+    let _authHeader = null;
+    let _username   = null;
+
+    function authHeader() { return _authHeader; }
+
+    // ── Login ────────────────────────────────────────────────────────
+
+    async function submitLogin(e) {
+        e.preventDefault();
+        const user = document.getElementById('inputUser').value.trim();
+        const pass = document.getElementById('inputPass').value;
+        const encoded = btoa(`${user}:${pass}`);
+        const header  = 'Basic ' + encoded;
+
+        document.getElementById('loginError').textContent = '';
+
+        // Verify by fetching the reservations list with these credentials.
+        try {
+            const resp = await fetch('/api/reservations?status=pending', {
+                headers: { Authorization: header },
+            });
+            if (resp.status === 401) {
+                document.getElementById('loginError').textContent = 'Invalid username or password.';
+                return;
+            }
+            if (!resp.ok) throw new Error(resp.statusText);
+        } catch (err) {
+            document.getElementById('loginError').textContent = 'Could not reach the server.';
+            return;
+        }
+
+        _authHeader = header;
+        _username   = user;
+        document.getElementById('loginModal').classList.add('hidden');
+        document.getElementById('app').style.display = '';
+        document.getElementById('usernameLabel').textContent = user;
+        document.getElementById('statusFilter').addEventListener('change', loadReservations);
+        loadReservations();
+    }
+
+    function logout() {
+        _authHeader = null;
+        _username   = null;
+        document.getElementById('loginModal').classList.remove('hidden');
+        document.getElementById('app').style.display = 'none';
+        document.getElementById('inputPass').value = '';
+        document.getElementById('loginError').textContent = '';
+    }
+
+    // ── Reservations ─────────────────────────────────────────────────
+
+    function toast(msg, type) {
+        const el = document.getElementById('toast');
+        el.textContent = msg;
+        el.className = 'toast toast-' + type + ' show';
+        setTimeout(() => el.classList.remove('show'), 3000);
+    }
+
+    function fmt(dt) {
+        const d = new Date(dt);
+        return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+            + ' ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function badge(status) {
+        return `<span class="badge badge-${status}">${status}</span>`;
+    }
+
+    async function loadReservations() {
+        const status = document.getElementById('statusFilter').value;
+        const qs = status ? `?status=${status}` : '';
+        try {
+            const resp = await fetch(`/api/reservations${qs}`, {
+                headers: { Authorization: authHeader() },
+            });
+            if (resp.status === 401) { logout(); return; }
+            if (!resp.ok) throw new Error(resp.statusText);
+            render(await resp.json());
+        } catch (e) {
+            toast('Failed to load: ' + e.message, 'err');
+        }
+    }
+
+    function render(rows) {
+        const tbody = document.getElementById('tbody');
+        if (!rows.length) {
+            tbody.innerHTML = '<tr><td colspan="8" class="empty">No reservations found</td></tr>';
+            return;
+        }
+        tbody.innerHTML = rows.map(r => `
+            <tr>
+                <td>#${r.id}</td>
+                <td>${esc(r.customer_name)} ${esc(r.customer_surname)}</td>
+                <td>${esc(r.car_number)}</td>
+                <td>${esc(r.floor)} / ${esc(r.space_number)}</td>
+                <td>${fmt(r.start_datetime)}<br>${fmt(r.end_datetime)}</td>
+                <td>€${Number(r.total_cost).toFixed(2)}</td>
+                <td>${badge(r.status)}</td>
+                <td class="actions">
+                    ${r.status === 'pending' ? `
+                        <button class="btn btn-approve" onclick="decide(${r.id},'approve')">Approve</button>
+                        <button class="btn btn-reject"  onclick="decide(${r.id},'reject')">Reject</button>
+                    ` : '—'}
+                </td>
+            </tr>
+        `).join('');
+    }
+
+    function esc(s) {
+        const d = document.createElement('div');
+        d.textContent = s;
+        return d.innerHTML;
+    }
+
+    async function decide(id, action) {
+        if (!confirm(`${action.charAt(0).toUpperCase() + action.slice(1)} reservation #${id}?`)) return;
+        try {
+            const resp = await fetch(`/api/reservations/${id}/${action}`, {
+                method: 'POST',
+                headers: { Authorization: authHeader() },
+            });
+            if (resp.status === 401) { logout(); return; }
+            const data = await resp.json();
+            if (!resp.ok) throw new Error(data.detail || resp.statusText);
+            toast(data.message, 'ok');
+            loadReservations();
+        } catch (e) {
+            toast(e.message, 'err');
+        }
+    }
+</script>
+
+</body>
+</html>

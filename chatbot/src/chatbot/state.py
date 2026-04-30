@@ -3,7 +3,7 @@ LangGraph state definition for the parking chatbot.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 from langgraph.graph import MessagesState
 from typing_extensions import TypedDict
@@ -31,3 +31,5 @@ class AgentState(MessagesState):
     reservation_data: ReservationData
     input_blocked: bool
     block_reason: str
+    booking_requested: bool       # set True by Agent 1 when user confirms booking
+    structured_response: Any      # BookingResult populated by booking_agent's response_format
